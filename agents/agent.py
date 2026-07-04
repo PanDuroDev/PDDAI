@@ -59,9 +59,13 @@ class Agent:
         return self.decode(tokens)
 
     def _parse_command(self, text):
-        first = text.strip().split()[0].lower()
-        if first in _COMMANDS:
-            return _COMMANDS[first] + (text[len(first):].strip(),)
+        t = text.strip()
+        if not t:
+            return None
+        first = t.split()[0].lower()
+        name = first.lstrip('\\/')
+        if name in _COMMANDS:
+            return _COMMANDS[name] + (t[len(first):].strip(),)
         return None
 
     def _find_suggestions(self, text):
@@ -101,6 +105,7 @@ class Agent:
     def chat(self):
         print("=" * 50)
         print("Agent ready. Type 'quit' to exit.")
+        print("Tools: \\calculator  \\search  \\read")
         print("=" * 50)
 
         while True:
