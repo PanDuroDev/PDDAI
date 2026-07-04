@@ -5,7 +5,6 @@ import urllib.request
 import urllib.parse
 
 _RESULT_MAX_CHARS = 1500
-_ERROR_PREFIX = "Error"
 
 
 def _truncate(text, limit=_RESULT_MAX_CHARS):
@@ -46,10 +45,7 @@ class Tool:
         }
 
     def call(self, **kwargs):
-        result = self.func(**kwargs)
-        if isinstance(result, str) and result.startswith(_ERROR_PREFIX):
-            return result
-        return str(result)
+        return str(self.func(**kwargs))
 
 
 class ToolRegistry:
@@ -71,11 +67,11 @@ class ToolRegistry:
     def call(self, name, **kwargs):
         tool = self.get(name)
         if tool is None:
-            return f"{_ERROR_PREFIX}: tool '{name}' not found"
+            return f"Tool '{name}' not found"
         try:
             return tool.call(**kwargs)
         except Exception as e:
-            return f"{_ERROR_PREFIX}: {tool.name} — {e}"
+            return f"{tool.name} error: {e}"
 
     def build_prompt_section(self):
         lines = ["\nAvailable tools:"]
@@ -85,46 +81,80 @@ class ToolRegistry:
 
 
 def make_web_search_tool():
-    def search(query, num_results=3):
+    def search(query):
         if not query or not query.strip():
-            return f"{_ERROR_PREFIX}: query is empty"
+            return "Please provide a search query."
+
+        q = query.strip()
+
+        # Primary: Wikipedia API (clean, reliable text)
         try:
-            num = max(1, min(10, int(num_results)))
-        except (ValueError, TypeError):
-            num = 3
-        try:
-            url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query.strip())}&format=json&no_html=1"
-            with urllib.request.urlopen(url, timeout=5) as resp:
+            search_url = (
+                "https://en.wikipedia.org/w/api.php?"
+                f"action=opensearch&search={urllib.parse.quote(q)}&limit=3&format=json"
+            )
+            with urllib.request.urlopen(search_url, timeout=5) as resp:
                 data = json.loads(resp.read())
-            parts = []
-            abstract = data.get("AbstractText", "")
+
+            titles = data[1] if len(data) > 1 else []
+            descs = data[2] if len(data) > 2 else []
+
+            if titles:
+                try:
+                    summary_url = (
+                        f"https://en.wikipedia.org/api/rest_v1/page/summary/"
+                        f"{urllib.parse.quote(titles[0])}"
+                    )
+                    with urllib.request.urlopen(summary_url, timeout=5) as resp:
+                        summary_data = json.loads(resp.read())
+                    extract = summary_data.get("extract", "")
+                    if extract:
+                        parts = [extract]
+                        for i in range(1, min(len(titles), 3)):
+                            d = descs[i] if i < len(descs) else ""
+                            if d:
+                                parts.append(f"\n{titles[i]}: {d}")
+                        return _truncate("\n".join(parts))
+                except Exception:
+                    pass
+
+                # Fallback within Wikipedia: show titles + descriptions
+                parts = []
+                for i in range(min(len(titles), 3)):
+                    t = titles[i]
+                    d = descs[i] if i < len(descs) else ""
+                    parts.append(f"{t}: {d}" if d else t)
+                if parts:
+                    return _truncate("\n".join(parts))
+        except Exception:
+            pass
+
+        # Fallback: DuckDuckGo instant answer
+        try:
+            url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(q)}&format=json&no_html=1"
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                d = json.loads(resp.read())
+
+            abstract = d.get("AbstractText", "")
             if abstract:
-                parts.append(f"Summary: {abstract}")
-            topics = data.get("RelatedTopics", [])
-            for topic in topics[:num]:
+                return _truncate(abstract)
+
+            for topic in d.get("RelatedTopics", []):
                 if isinstance(topic, dict):
                     txt = topic.get("Text", "")
                     if txt:
-                        parts.append(f"- {txt}")
-            if not parts:
-                return "No results found"
-            return _truncate("\n".join(parts))
-        except urllib.error.HTTPError as e:
-            return f"{_ERROR_PREFIX}: web_search returned status {e.code}"
-        except urllib.error.URLError:
-            return f"{_ERROR_PREFIX}: web_search — network error"
-        except json.JSONDecodeError:
-            return f"{_ERROR_PREFIX}: web_search — invalid response"
-        except Exception as e:
-            return f"{_ERROR_PREFIX}: web_search — {e}"
+                        return _truncate(txt)
+        except Exception:
+            pass
+
+        return "No information found."
 
     return Tool(
         name="web_search",
-        description="Search web for current information. Returns text summaries.",
+        description="Search the web for information about any topic.",
         func=search,
         parameters={
             "query": {"type": "string", "description": "search query", "required": True},
-            "num_results": {"type": "integer", "description": "results count (1-10)"},
         },
     )
 
@@ -134,14 +164,14 @@ def make_calculator_tool():
 
     def calculate(expression):
         if not expression or not expression.strip():
-            return f"{_ERROR_PREFIX}: expression is empty"
+            return "No expression provided."
         if len(expression) > 500:
-            return f"{_ERROR_PREFIX}: expression too long"
+            return "Expression too long."
         safe = expression.strip().replace("^", "**").replace(",", ".")
         safe = re.sub(r'(\d+)%', r'\1/100', safe)
         allowed_check = safe.replace("**", "").replace("//", "")
         if not all(c in _SAFE_CHARS for c in allowed_check):
-            return f"{_ERROR_PREFIX}: invalid characters in expression"
+            return "Invalid expression."
         try:
             result = eval(safe, {"__builtins__": {}}, {})
             if isinstance(result, (int, float)):
@@ -150,15 +180,15 @@ def make_calculator_tool():
                 return f"{result:.10g}"
             return str(result)
         except ZeroDivisionError:
-            return f"{_ERROR_PREFIX}: division by zero"
+            return "Cannot divide by zero."
         except SyntaxError:
-            return f"{_ERROR_PREFIX}: invalid syntax"
-        except Exception as e:
-            return f"{_ERROR_PREFIX}: {e}"
+            return "Invalid syntax."
+        except Exception:
+            return "Error in calculation."
 
     return Tool(
         name="calculator",
-        description="Evaluate math expressions. Supports + - * / ** ( ) % and decimals.",
+        description="Evaluate math expressions. Supports + - * / ( ) and decimals.",
         func=calculate,
         parameters={
             "expression": {
@@ -173,26 +203,26 @@ def make_calculator_tool():
 def make_read_file_tool(base_dir="."):
     def read_file(path):
         if not path or not path.strip():
-            return f"{_ERROR_PREFIX}: path is empty"
+            return "No path provided."
         full = _safe_path(base_dir, path.strip())
         if full is None:
-            return f"{_ERROR_PREFIX}: path outside allowed directory"
+            return "Path outside allowed directory."
         if not os.path.exists(full):
-            return f"{_ERROR_PREFIX}: file not found — {path.strip()}"
+            return f"File not found: {path.strip()}"
         if not os.path.isfile(full):
-            return f"{_ERROR_PREFIX}: not a file — {path.strip()}"
+            return f"Not a file: {path.strip()}"
         try:
             with open(full, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read(_RESULT_MAX_CHARS + 500)
             return _truncate(content)
         except PermissionError:
-            return f"{_ERROR_PREFIX}: permission denied — {path.strip()}"
+            return f"Cannot read: {path.strip()}"
         except Exception as e:
-            return f"{_ERROR_PREFIX}: read_file — {e}"
+            return f"Error: {e}"
 
     return Tool(
         name="read_file",
-        description="Read a local text file. Returns content or error message.",
+        description="Read a text file from the local filesystem.",
         func=read_file,
         parameters={
             "path": {
