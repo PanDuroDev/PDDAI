@@ -81,18 +81,16 @@ class Agent:
         return self.tools.call(name, **{param: value or '?'})
 
     def run(self, user_input):
-        # Mode 1: user picks a tool
         cmd = self._parse_command(user_input)
         if cmd:
             tool, param, value = cmd
             result = self._execute(tool, param, value)
-            response = self.generate(result, max_new=96)
+            prompt = f"{value} = {result}" if tool == 'calculator' else result
+            response = self.generate(prompt, max_new=96)
             return response
 
-        # Mode 2: normal chat
         response = self.generate(user_input, max_new=128)
 
-        # Mode 3: model suggests a tool in its response
         suggestions = self._find_suggestions(response)
         if suggestions:
             for tool, param, value in suggestions:
