@@ -4,7 +4,6 @@ User picks tools primarily; model can suggest secondarily.
 """
 
 import torch
-import re
 from tools.registry import ToolRegistry, make_default_registry
 
 _COMMANDS = {
@@ -12,8 +11,6 @@ _COMMANDS = {
     'search': ('web_search', 'query'),           'web_search': ('web_search', 'query'),
     'read': ('read_file', 'path'),               'read_file': ('read_file', 'path'),
 }
-
-_SUGGEST_RE = re.compile(r'Tool\s*:\s*(\w+)\s*\(([^)]*)\)', re.IGNORECASE)
 
 
 class Agent:
@@ -71,15 +68,6 @@ class Agent:
             return _COMMANDS[name] + (t[len(first):].strip(),)
         return None
 
-    def _find_suggestions(self, text):
-        results = []
-        for name, val in _SUGGEST_RE.findall(text):
-            name = name.lower()
-            if name in _COMMANDS:
-                tool, param = _COMMANDS[name]
-                results.append((tool, param, val.strip()))
-        return results
-
     def _execute(self, name, param, value):
         if not value or not value.strip():
             value = ''
@@ -90,21 +78,9 @@ class Agent:
         if cmd:
             tool, param, value = cmd
             result = self._execute(tool, param, value)
-            prompt = f"{value} = {result}" if tool == 'calculator' else result
-            response, _ = self.generate(prompt, max_new=96)
-            return response
+            return result
 
         response, _ = self.generate(user_input, max_new=128)
-
-        suggestions = self._find_suggestions(response)
-        if suggestions:
-            response = re.sub(_SUGGEST_RE.pattern, '', response).strip()
-            response = re.sub(r' +', ' ', response)
-            for tool, param, value in suggestions:
-                result = self._execute(tool, param, value)
-                cont, _ = self.generate(result, max_new=64)
-                response += "\n" + cont
-
         return response
 
     def chat(self):
