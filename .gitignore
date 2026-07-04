@@ -1,0 +1,29 @@
+# Model checkpoints
+saved_model/
+*.pt
+
+# Training data (auto-downloaded by main.py)
+data/corpus*.txt
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Memory / RAG index
+memory/
+
+# Environment
+.env
+.venv
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp test files
+test_*.py
