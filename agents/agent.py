@@ -1,153 +1,76 @@
-import os
+"""
+Agent system designed for 4.69M parameter model.
+
+Principles:
+- Code handles all tool logic — model only generates natural text
+- No tool formats, no complex instructions in prompts
+- Three activation modes: auto-detect, explicit command, model suggestion
+- Repetition prevention built into generation
+
+Mode 1 — Intent detection (code-based, no model involvement):
+  User: "what is 2+2?"
+  → Code detects math intent → executes calculator → model writes answer
+
+Mode 2 — Explicit command (user-driven):
+  User: "calculator 2+2"
+  → Code parses command → executes → model writes answer
+
+Mode 3 — Model suggestion (model-driven):
+  Model: "I can use Tool: calculator (2+2) to help"
+  → Code detects Tool: pattern → executes → model continues
+"""
+
 import torch
 import re
 from tools.registry import ToolRegistry, make_default_registry
 
+SYSTEM_PROMPT = "You are a helpful assistant."
 
-def infer_config_from_state(checkpoint):
-    """Infer model architecture from checkpoint.
-    `checkpoint` is the full dict (not just state_dict).
-    First tries 'model_config' metadata, falls back to inference from weights."""
-    if 'model_config' in checkpoint:
-        cfg = dict(checkpoint['model_config'])
-        if 'vocab_size' not in cfg:
-            state = checkpoint.get('model_state_dict', checkpoint)
-            cfg['vocab_size'] = state['token_emb.weight'].shape[0]
-        return cfg
+# ── Intent detection rules (code-based, no model burden) ──────────────
+# (pattern, tool_name, param_name, extract_fn)
+# extract_fn(text) returns the value to pass to the tool
 
-    state = checkpoint.get('model_state_dict', checkpoint)
-    embed_dim = state['token_emb.weight'].shape[1]
-    vocab_size = state['token_emb.weight'].shape[0]
-    tied = state.get('tied_embeddings',
-                          'head.weight' not in state or
-                          state['head.weight'].shape[0] == state['token_emb.weight'].shape[0])
+def _extract_expr(text):
+    m = re.search(r'[\d][\d+\-*/().,%^ ]*', text)
+    return m.group(0).strip() if m else text
 
-    rope_cos = state.get('rope_cos')
-    q_proj = state.get('blocks.0.attn.q_proj.weight')
-    k_proj = state.get('blocks.0.attn.k_proj.weight')
+def _extract_query(text):
+    for kw in ['look up', 'search for', 'find', 'tell me about', 'google', 'search']:
+        if kw in text.lower():
+            idx = text.lower().index(kw) + len(kw)
+            return text[idx:].strip().lstrip('"\' ').rstrip('"?\'.,!')
+    return text
 
-    if rope_cos is not None and q_proj is not None and k_proj is not None:
-        head_dim = rope_cos.shape[1] * 2
-        num_heads = embed_dim // head_dim
-        num_kv_heads = k_proj.shape[0] // head_dim
-        num_layers = sum(1 for k in state if k.startswith('blocks.') and k.endswith('attn.q_proj.weight'))
-    else:
-        num_heads = 6
-        num_kv_heads = 3
-        num_layers = sum(1 for k in state if k.startswith('blocks.'))
+def _extract_path(text):
+    m = re.search(r'(?:read|open|show)\s+file\s+(.+)', text, re.IGNORECASE)
+    return m.group(1).strip() if m else text
 
-    ffn_gate = state.get('blocks.0.ffn.gate.weight')
-    ff_hidden_dim = ffn_gate.shape[0] if ffn_gate is not None else 512
+_INTENT = [
+    (r'\b(?:sum|add|plus|total|calculate|compute)\b', 'calculator', 'expression', _extract_expr),
+    (r'\b(?:search|find|look\s*up|google|tell\s*me\s*about)\b', 'web_search', 'query', _extract_query),
+    (r'\b(?:read|open|show)\s+file\b', 'read_file', 'path', _extract_path),
+]
 
-    refresh_layers = sorted(int(k.split('.')[1]) for k in state if 'refresh.gate.weight' in k)
+# ── Manual command aliases ─────────────────────────────────────────────
+_COMMANDS = {
+    'calculator': ('calculator', 'expression'), 'calc': ('calculator', 'expression'),
+    'search': ('web_search', 'query'),           'web_search': ('web_search', 'query'),
+    'read': ('read_file', 'path'),               'read_file': ('read_file', 'path'),
+}
 
-    return {
-        'vocab_size': vocab_size,
-        'embed_dim': embed_dim,
-        'num_heads': num_heads,
-        'num_kv_heads': num_kv_heads,
-        'ff_hidden_dim': ff_hidden_dim,
-        'num_layers': num_layers,
-        'max_len': 512,
-        'tied_embeddings': tied,
-        'refresh_layers': refresh_layers,
-    }
-
-
-def load_model(checkpoint_path="saved_model/last_model.pt", tokenizer_path="data/tokenizer.json"):
-    from models.transformer import TransformerModel
-    from data.tokenizer import load_tokenizer
-
-    print("Loading model...")
-    if not os.path.exists(checkpoint_path):
-        print(f"No checkpoint found at {checkpoint_path}")
-        return None, None
-    try:
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    except Exception as e:
-        print(f"Checkpoint corrupted: {e}")
-        return None, None
-    tokenizer = load_tokenizer(tokenizer_path)
-    state = checkpoint.get('model_state_dict', checkpoint)
-    cfg = infer_config_from_state(checkpoint)
-
-    model = TransformerModel(
-        vocab_size=cfg['vocab_size'],
-        embed_dim=cfg['embed_dim'],
-        num_heads=cfg['num_heads'],
-        ff_hidden_dim=cfg['ff_hidden_dim'],
-        num_layers=cfg['num_layers'],
-        max_len=cfg.get('max_len', 512),
-        num_kv_heads=cfg['num_kv_heads'],
-        tied_embeddings=cfg['tied_embeddings'],
-        refresh_layers=cfg['refresh_layers'],
-    )
-    result = model.load_state_dict(state, strict=False)
-    if result.missing_keys:
-        print(f"  WARNING: Missing keys: {result.missing_keys}")
-    if result.unexpected_keys:
-        print(f"  WARNING: Unexpected keys: {result.unexpected_keys}")
-    if cfg['tied_embeddings']:
-        model.head.weight = model.token_emb.weight
-    model.eval()
-    total_params = sum(p.numel() for p in model.parameters())
-    param_mb = total_params * 4 / (1024 * 1024)
-    print(f"Model: {total_params/1e6:.2f}M parameters ({param_mb:.0f}MB) | "
-          f"{cfg['vocab_size']} vocab, {cfg['embed_dim']}d, "
-          f"{cfg['num_heads']}h/{cfg['num_kv_heads']}kv, {cfg['num_layers']}L, "
-          f"{'tied' if cfg['tied_embeddings'] else 'untied'} emb | "
-          f"refresh={cfg['refresh_layers']}")
-    return model, tokenizer
-
-
-def resolve_model_path(model_spec):
-    if model_spec == "last":
-        return "saved_model/last_model.pt"
-    if model_spec == "best":
-        return "saved_model/best_model.pt"
-    if model_spec == "final":
-        return "saved_model/checkpoint_final.pt"
-    return model_spec
-
-
-SYSTEM_PROMPT = (
-    "You are a helpful assistant with access to tools.\n"
-    "To suggest using a tool, write: Tool: tool_name (input)\n"
-    "Available tools: calculator, search, read"
-)
+# ── Pattern for model-suggested tools in generated text ──────────────
+_SUGGEST_RE = re.compile(r'Tool\s*:\s*(\w+)\s*\(([^)]*)\)', re.IGNORECASE)
 
 
 class Agent:
     def __init__(self, model, tokenizer, device='cpu',
-                 tools: ToolRegistry = None, max_tokens=512):
+                 tools: ToolRegistry = None, max_tokens=256):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
         self.tools = tools or make_default_registry()
         self.max_tokens = max_tokens
-        self.history = []
-        self._tool_map = {
-            'calculator': ('calculator', 'expression'),
-            'calc': ('calculator', 'expression'),
-            'search': ('web_search', 'query'),
-            'web_search': ('web_search', 'query'),
-            'read': ('read_file', 'path'),
-            'read_file': ('read_file', 'path'),
-        }
-        self._tool_prompts = {
-            'calculator': {
-                'input': "The user wants to calculate something.\nWhat math expression should I evaluate?",
-                'result': 'Result: {result}',
-            },
-            'web_search': {
-                'input': "The user wants to search the web.\nWhat should I search for?",
-                'result': 'Search result: {result}',
-            },
-            'read_file': {
-                'input': "The user wants to read a file.\nWhat file path should I read?",
-                'result': 'File content:\n{result}',
-            },
-        }
+        self.history: list[tuple[str, str]] = []
 
     def encode(self, text):
         from data.tokenizer import encode_text
@@ -157,7 +80,7 @@ class Agent:
         from data.tokenizer import decode_text
         return decode_text(self.tokenizer, ids)
 
-    def generate(self, prompt, max_new=128, temperature=0.7, top_k=40):
+    def generate(self, prompt, max_new=96, temperature=0.7, top_k=40, rep_penalty=1.15):
         input_ids = self.encode(prompt)
         input_ids = input_ids[-256:]
         prompt_len = len(input_ids)
@@ -166,135 +89,117 @@ class Agent:
         with torch.inference_mode():
             logits, past = self.model(x, use_cache=True)
 
-        logits = logits[:, -1, :] / temperature
-        if top_k > 0:
-            top_vals, _ = torch.topk(logits, top_k, dim=-1)
-            logits[logits < top_vals[:, -1:]] = float('-inf')
-        next_id = torch.multinomial(torch.softmax(logits, dim=-1), 1).item()
-        input_ids.append(next_id)
-        if next_id == self.tokenizer.token_to_id("</s>"):
-            return self.decode(input_ids[prompt_len:])
+        tokens = []
+        for i in range(max_new):
+            logits = logits[:, -1, :] / temperature
 
-        for _ in range(max_new - 1):
+            if rep_penalty > 1.0 and tokens:
+                recent = set(tokens[-8:])
+                for tid in recent:
+                    logits[0, tid] /= rep_penalty
+
+            if top_k > 0:
+                vals, _ = torch.topk(logits, top_k, dim=-1)
+                logits[logits < vals[:, -1:]] = float('-inf')
+
+            next_id = torch.multinomial(torch.softmax(logits, dim=-1), 1).item()
+            tokens.append(next_id)
+
+            if next_id == self.tokenizer.token_to_id("</s>"):
+                break
+
             x = torch.tensor([[next_id]], dtype=torch.long).to(self.device)
             with torch.inference_mode():
                 logits, past = self.model(x, past_key_values=past, use_cache=True)
 
-            logits = logits[:, -1, :] / temperature
-            if top_k > 0:
-                top_vals, _ = torch.topk(logits, top_k, dim=-1)
-                logits[logits < top_vals[:, -1:]] = float('-inf')
-            next_id = torch.multinomial(torch.softmax(logits, dim=-1), 1).item()
-            input_ids.append(next_id)
-            if next_id == self.tokenizer.token_to_id("</s>"):
-                break
-
         return self.decode(input_ids[prompt_len:])
 
-    def format_history(self):
+    def _prompt(self, user_input, extra=None):
         parts = [SYSTEM_PROMPT]
-        for turn in self.history:
-            if 'assistant' in turn:
-                parts.append(f"\nUser: {turn.get('user', '')}")
-                parts.append(f"\nAssistant: {turn['assistant']}")
+        for u, a in self.history[-2:]:
+            parts.append(f"User: {u}\n{a}")
+        parts.append(f"User: {user_input}\n")
+        if extra:
+            parts.append(f"[{extra}]\n")
+        parts.append("Assistant: ")
         return "\n".join(parts)
 
-    def _find_tool_calls(self, text):
-        pattern = r'Tool:\s*(\w+)\s*\(([^)]*)\)'
-        matches = re.findall(pattern, text)
-        results = []
-        for name, value in matches:
-            name = name.lower()
-            if name in self._tool_map:
-                tool_name, param_name = self._tool_map[name]
-                results.append((tool_name, param_name, value.strip()))
-        return results
-
-    def _parse_tool_request(self, text):
-        """Parse 'toolname' or 'toolname value'. Returns (tool_name, param_name, user_value) or None."""
-        text = text.strip()
-        if not text:
-            return None
-        first_word = text.split()[0].lower()
-        rest = text[len(first_word):].strip()
-        if first_word in self._tool_map:
-            tool_name, param_name = self._tool_map[first_word]
-            return tool_name, param_name, rest
+    def _detect_intent(self, text):
+        lower = text.lower()
+        for pat, tool, param, extract in _INTENT:
+            if re.search(pat, lower):
+                value = extract(text)
+                return tool, param, value
         return None
 
-    def _execute_with_tool(self, tool_name, param_name, user_value):
-        """3-step: model decides input → execute real tool → model writes answer."""
-        tool = self.tools.get(tool_name)
-        prompts = self._tool_prompts[tool_name]
+    def _parse_command(self, text):
+        first = text.strip().split()[0].lower()
+        if first in _COMMANDS:
+            return _COMMANDS[first] + (text[len(first):].strip(),)
+        return None
 
-        if user_value:
-            tool_input = user_value
-        else:
-            tool_input = self.generate(
-                prompts['input'],
-                max_new=64, temperature=0.5, top_k=20
-            ).strip()
-            if not tool_input:
-                tool_input = "unknown"
+    def _find_suggestions(self, text):
+        results = []
+        for name, val in _SUGGEST_RE.findall(text):
+            name = name.lower()
+            if name in _COMMANDS:
+                tool, param = _COMMANDS[name]
+                results.append((tool, param, val.strip()))
+        return results
 
-        result = self.tools.call(tool_name, **{param_name: tool_input})
+    def _execute(self, name, param, value):
+        return self.tools.call(name, **{param: value or '?'})
 
-        answer_prompt = (
-            f"{prompts['result'].format(result=result)}\n\n"
-            f"Write a natural answer."
-        )
-        final = self.generate(answer_prompt, max_new=128, temperature=0.7)
-        return final
-
-    def run(self, user_input, max_steps=3):
-        parsed = self._parse_tool_request(user_input)
-        if parsed:
-            tool_name, param_name, user_value = parsed
-            response = self._execute_with_tool(tool_name, param_name, user_value)
-            self.history.append({"user": user_input, "assistant": response})
+    def run(self, user_input):
+        # ── Mode 1: intent detection ─────────────────────────────
+        intent = self._detect_intent(user_input)
+        if intent:
+            tool, param, value = intent
+            result = self._execute(tool, param, value)
+            extra = f"{tool}: {result}"
+            response = self.generate(self._prompt(user_input, extra), max_new=96)
+            self.history.append((user_input, response))
             return response
 
-        self.history.append({"user": user_input})
-        prompt = self.format_history() + f"\nUser: {user_input}\nAssistant: "
-        response = self.generate(prompt, max_new=128, temperature=0.7)
-        full = response
+        # ── Mode 2: explicit command ─────────────────────────────
+        cmd = self._parse_command(user_input)
+        if cmd:
+            tool, param, value = cmd
+            result = self._execute(tool, param, value)
+            extra = f"{tool}({value}): {result}"
+            response = self.generate(self._prompt(user_input, extra), max_new=96)
+            self.history.append((user_input, response))
+            return response
 
-        for step in range(max_steps):
-            calls = self._find_tool_calls(full)
-            if not calls:
-                break
-            for tool_name, param_name, value in calls:
-                result = self.tools.call(tool_name, **{param_name: value})
-                continuation_prompt = (
-                    f"\nTool result ({tool_name}): {result}\n"
-                    f"Continue your answer."
-                )
-                continuation = self.generate(
-                    continuation_prompt, max_new=96, temperature=0.7
-                )
-                full += "\n" + continuation
+        # ── Mode 3: normal conversation ─────────────────────────
+        response = self.generate(self._prompt(user_input), max_new=128)
 
-        self.history[-1]["assistant"] = full
-        return full
+        suggestions = self._find_suggestions(response)
+        if suggestions:
+            for tool, param, value in suggestions:
+                result = self._execute(tool, param, value)
+                cont = self.generate(
+                    f"Assistant: {response}\n[{tool}: {result}]\nContinue: ",
+                    max_new=64,
+                )
+                response += "\n" + cont
+
+        self.history.append((user_input, response))
+        return response
 
     def chat(self):
         print("=" * 50)
-        print("Agent Ready! Type 'quit' to exit.")
-        print("Tools: calculator, search, read")
-        print("  calculator  - evaluate math")
-        print("  search      - search the web")
-        print("  read        - read a file")
+        print("Agent ready. Type 'quit' to exit.")
         print("=" * 50)
 
         while True:
             try:
                 user = input("\nYou: ")
-                if user.lower() in ["quit", "exit", "q"]:
+                if user.lower() in ("quit", "exit", "q"):
                     break
-                response = self.run(user)
-                print(f"AI: {response}")
+                print(f"AI: {self.run(user)}")
             except KeyboardInterrupt:
-                print("\nGoodbye!")
+                print("\nBye!")
                 break
             except Exception as e:
                 print(f"Error: {e}")
@@ -302,15 +207,12 @@ class Agent:
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Run the AI agent")
-    parser.add_argument("--model", type=str, default="last",
-                        help="Model to load: 'last', 'best', 'final', or a file path")
-    parser.add_argument("--tokenizer", type=str, default="data/tokenizer.json",
-                        help="Path to tokenizer file")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", default="last")
+    parser.add_argument("--tokenizer", default="data/tokenizer.json")
     args = parser.parse_args()
+    from chat import load_model, resolve_model_path
     path = resolve_model_path(args.model)
-    model, tokenizer = load_model(checkpoint_path=path, tokenizer_path=args.tokenizer)
-    if model is None or tokenizer is None:
-        exit(1)
-    agent = Agent(model, tokenizer)
-    agent.chat()
+    model, tokenizer = load_model(path, args.tokenizer)
+    if model and tokenizer:
+        Agent(model, tokenizer).chat()

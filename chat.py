@@ -52,46 +52,29 @@ def infer_config_from_state(checkpoint):
         'num_kv_heads': num_kv_heads,
         'ff_hidden_dim': ff_hidden_dim,
         'num_layers': num_layers,
-        'max_len': 512,
+        'max_len': 256,
         'tied_embeddings': tied,
         'refresh_layers': refresh_layers,
     }
 
 
-def resolve_model_path(model_spec):
-    if model_spec == "last":
-        return "saved_model/last_model.pt"
-    if model_spec == "best":
-        return "saved_model/best_model.pt"
-    if model_spec == "final":
-        return "saved_model/checkpoint_final.pt"
-    return model_spec
-
-
-def load_model(checkpoint_path="saved_model/checkpoint_final.pt", tokenizer_path="data/tokenizer.json"):
-    print("Loading model...")
+def load_model(checkpoint_path="checkpoints/last_model.pt", tokenizer_path="data/tokenizer.json"):
     if not os.path.exists(checkpoint_path):
-        print(f"No checkpoint found at {checkpoint_path}")
-        print("Run main.py first to train the model.")
+        print(f"Checkpoint not found: {checkpoint_path}")
         return None, None
-    try:
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    except Exception as e:
-        print(f"Checkpoint corrupted: {e}")
-        print("Delete saved_model/checkpoint.pt and run main.py again.")
-        return None, None
-    tokenizer = load_tokenizer(tokenizer_path)
-    state = checkpoint.get('model_state_dict', checkpoint)
+
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
     cfg = infer_config_from_state(checkpoint)
+    state = checkpoint.get('model_state_dict', checkpoint)
 
     model = TransformerModel(
         vocab_size=cfg['vocab_size'],
         embed_dim=cfg['embed_dim'],
         num_heads=cfg['num_heads'],
+        num_kv_heads=cfg['num_kv_heads'],
         ff_hidden_dim=cfg['ff_hidden_dim'],
         num_layers=cfg['num_layers'],
-        max_len=cfg.get('max_len', 512),
-        num_kv_heads=cfg['num_kv_heads'],
+        max_len=cfg['max_len'],
         tied_embeddings=cfg['tied_embeddings'],
         refresh_layers=cfg['refresh_layers'],
     )
@@ -113,8 +96,18 @@ def load_model(checkpoint_path="saved_model/checkpoint_final.pt", tokenizer_path
     return model, tokenizer
 
 
-def generate(model, tokenizer, prompt, max_tokens=128, temperature=0.9, top_k=40):
-    model.eval()
+def resolve_model_path(name):
+    if name == "last":
+        return "checkpoints/last_model.pt"
+    elif name == "best":
+        return "checkpoints/best_model.pt"
+    elif name == "final":
+        return "checkpoints/checkpoint.pt"
+    else:
+        return name
+
+
+def generate(model, tokenizer, prompt, max_tokens=128, temperature=0.7, top_k=40):
     input_ids = encode_text(tokenizer, prompt)
     input_ids = input_ids[-256:]
     prompt_len = len(input_ids)
@@ -123,31 +116,19 @@ def generate(model, tokenizer, prompt, max_tokens=128, temperature=0.9, top_k=40
     with torch.inference_mode():
         logits, past = model(x, use_cache=True)
 
-    logits = logits[:, -1, :] / temperature
-    if top_k > 0:
-        top_vals, _ = torch.topk(logits, top_k, dim=-1)
-        logits[logits < top_vals[:, -1:]] = float('-inf')
-    next_id = torch.multinomial(torch.softmax(logits, dim=-1), 1).item()
-    input_ids.append(next_id)
-
-    if next_id == tokenizer.token_to_id("</s>"):
-        return decode_text(tokenizer, input_ids[prompt_len:])
-
-    for _ in range(max_tokens - 1):
-        x = torch.tensor([[next_id]], dtype=torch.long)
-        with torch.inference_mode():
-            logits, past = model(x, past_key_values=past, use_cache=True)
-
+    tokens = []
+    for i in range(max_tokens):
         logits = logits[:, -1, :] / temperature
         if top_k > 0:
             top_vals, _ = torch.topk(logits, top_k, dim=-1)
             logits[logits < top_vals[:, -1:]] = float('-inf')
-
         next_id = torch.multinomial(torch.softmax(logits, dim=-1), 1).item()
-        input_ids.append(next_id)
-
+        tokens.append(next_id)
         if next_id == tokenizer.token_to_id("</s>"):
             break
+        x = torch.tensor([[next_id]], dtype=torch.long)
+        with torch.inference_mode():
+            logits, past = model(x, past_key_values=past, use_cache=True)
 
     return decode_text(tokenizer, input_ids[prompt_len:])
 
@@ -164,7 +145,6 @@ if __name__ == "__main__":
         exit(1)
 
     history = []
-    system_prompt = "You are a helpful assistant. Answer concisely."
 
     print("\n" + "=" * 50)
     print("AI Chat Ready! Type 'quit' to exit.")
@@ -175,13 +155,17 @@ if __name__ == "__main__":
             prompt = input("You: ")
             if prompt.lower() in ["quit", "exit", "q"]:
                 break
-            history.append(f"User: {prompt}")
-            conv = system_prompt + "\n\n" + "\n".join(history[-6:]) + "\nAssistant: "
-            response = generate(model, tokenizer, conv)
+
+            parts = []
+            for u, a in history[-4:]:
+                parts.append(f"You: {u}")
+                parts.append(f"AI: {a}")
+            parts.append(f"You: {prompt}")
+            parts.append("AI: ")
+
+            response = generate(model, tokenizer, "\n".join(parts))
             print(f"AI: {response}\n")
-            history.append(f"Assistant: {response}")
+            history.append((prompt, response))
         except KeyboardInterrupt:
-            print("\nGoodbye!")
+            print("\nBye!")
             break
-        except Exception as e:
-            print(f"Error: {e}")
