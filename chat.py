@@ -103,9 +103,12 @@ def load_model(checkpoint_path="saved_model/checkpoint_final.pt", tokenizer_path
     if cfg['tied_embeddings']:
         model.head.weight = model.token_emb.weight
     model.eval()
-    print(f"Loaded: {cfg['vocab_size']} vocab, {cfg['embed_dim']} dim, "
-          f"{cfg['num_heads']} heads/{cfg['num_kv_heads']} kv, {cfg['num_layers']} layers, "
-          f"{'tied' if cfg['tied_embeddings'] else 'untied'} emb, "
+    total_params = sum(p.numel() for p in model.parameters())
+    param_mb = total_params * 4 / (1024 * 1024)
+    print(f"Model: {total_params/1e6:.2f}M parameters ({param_mb:.0f}MB) | "
+          f"{cfg['vocab_size']} vocab, {cfg['embed_dim']}d, "
+          f"{cfg['num_heads']}h/{cfg['num_kv_heads']}kv, {cfg['num_layers']}L, "
+          f"{'tied' if cfg['tied_embeddings'] else 'untied'} emb | "
           f"refresh={cfg['refresh_layers']}")
     return model, tokenizer
 
