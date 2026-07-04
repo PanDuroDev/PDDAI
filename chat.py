@@ -163,6 +163,9 @@ if __name__ == "__main__":
     if model is None or tokenizer is None:
         exit(1)
 
+    history = []
+    system_prompt = "You are a helpful assistant. Answer concisely."
+
     print("\n" + "=" * 50)
     print("AI Chat Ready! Type 'quit' to exit.")
     print("=" * 50 + "\n")
@@ -172,8 +175,11 @@ if __name__ == "__main__":
             prompt = input("You: ")
             if prompt.lower() in ["quit", "exit", "q"]:
                 break
-            response = generate(model, tokenizer, prompt)
+            history.append(f"User: {prompt}")
+            conv = system_prompt + "\n\n" + "\n".join(history[-6:]) + "\nAssistant: "
+            response = generate(model, tokenizer, conv)
             print(f"AI: {response}\n")
+            history.append(f"Assistant: {response}")
         except KeyboardInterrupt:
             print("\nGoodbye!")
             break

@@ -1,5 +1,6 @@
 import os
 import torch
+import re
 from tools.registry import ToolRegistry, make_default_registry
 
 
@@ -109,7 +110,11 @@ def resolve_model_path(model_spec):
     return model_spec
 
 
-SYSTEM_PROMPT = """You are a helpful assistant. Answer the user's questions clearly and naturally."""
+SYSTEM_PROMPT = (
+    "You are a helpful assistant with access to tools.\n"
+    "To suggest using a tool, write: Tool: tool_name (input)\n"
+    "Available tools: calculator, search, read"
+)
 
 
 class Agent:
@@ -194,6 +199,17 @@ class Agent:
                 parts.append(f"\nAssistant: {turn['assistant']}")
         return "\n".join(parts)
 
+    def _find_tool_calls(self, text):
+        pattern = r'Tool:\s*(\w+)\s*\(([^)]*)\)'
+        matches = re.findall(pattern, text)
+        results = []
+        for name, value in matches:
+            name = name.lower()
+            if name in self._tool_map:
+                tool_name, param_name = self._tool_map[name]
+                results.append((tool_name, param_name, value.strip()))
+        return results
+
     def _parse_tool_request(self, text):
         """Parse 'toolname' or 'toolname value'. Returns (tool_name, param_name, user_value) or None."""
         text = text.strip()
@@ -230,7 +246,7 @@ class Agent:
         final = self.generate(answer_prompt, max_new=128, temperature=0.7)
         return final
 
-    def run(self, user_input, max_steps=5):
+    def run(self, user_input, max_steps=3):
         parsed = self._parse_tool_request(user_input)
         if parsed:
             tool_name, param_name, user_value = parsed
@@ -241,8 +257,25 @@ class Agent:
         self.history.append({"user": user_input})
         prompt = self.format_history() + f"\nUser: {user_input}\nAssistant: "
         response = self.generate(prompt, max_new=128, temperature=0.7)
-        self.history[-1]["assistant"] = response
-        return response
+        full = response
+
+        for step in range(max_steps):
+            calls = self._find_tool_calls(full)
+            if not calls:
+                break
+            for tool_name, param_name, value in calls:
+                result = self.tools.call(tool_name, **{param_name: value})
+                continuation_prompt = (
+                    f"\nTool result ({tool_name}): {result}\n"
+                    f"Continue your answer."
+                )
+                continuation = self.generate(
+                    continuation_prompt, max_new=96, temperature=0.7
+                )
+                full += "\n" + continuation
+
+        self.history[-1]["assistant"] = full
+        return full
 
     def chat(self):
         print("=" * 50)
