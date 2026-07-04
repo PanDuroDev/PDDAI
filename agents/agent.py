@@ -3,32 +3,16 @@ Agent system designed for 4.69M parameter model.
 
 Principles:
 - Code handles all tool logic — model only generates natural text
-- No tool formats, no complex instructions in prompts
+- No formatting, no labels — raw text only (model trained on raw text)
 - Three activation modes: auto-detect, explicit command, model suggestion
 - Repetition prevention built into generation
-
-Mode 1 — Intent detection (code-based, no model involvement):
-  User: "what is 2+2?"
-  → Code detects math intent → executes calculator → model writes answer
-
-Mode 2 — Explicit command (user-driven):
-  User: "calculator 2+2"
-  → Code parses command → executes → model writes answer
-
-Mode 3 — Model suggestion (model-driven):
-  Model: "I can use Tool: calculator (2+2) to help"
-  → Code detects Tool: pattern → executes → model continues
 """
 
 import torch
 import re
 from tools.registry import ToolRegistry, make_default_registry
 
-SYSTEM_PROMPT = "You are a helpful assistant."
-
-# ── Intent detection rules (code-based, no model burden) ──────────────
-# (pattern, tool_name, param_name, extract_fn)
-# extract_fn(text) returns the value to pass to the tool
+# ── Intent detection rules (code-based) ───────────────────────────────
 
 def _extract_expr(text):
     m = re.search(r'[\d][\d+\-*/().,%^ ]*', text)
@@ -51,14 +35,12 @@ _INTENT = [
     (r'\b(?:read|open|show)\s+file\b', 'read_file', 'path', _extract_path),
 ]
 
-# ── Manual command aliases ─────────────────────────────────────────────
 _COMMANDS = {
     'calculator': ('calculator', 'expression'), 'calc': ('calculator', 'expression'),
     'search': ('web_search', 'query'),           'web_search': ('web_search', 'query'),
     'read': ('read_file', 'path'),               'read_file': ('read_file', 'path'),
 }
 
-# ── Pattern for model-suggested tools in generated text ──────────────
 _SUGGEST_RE = re.compile(r'Tool\s*:\s*(\w+)\s*\(([^)]*)\)', re.IGNORECASE)
 
 
@@ -80,7 +62,7 @@ class Agent:
         from data.tokenizer import decode_text
         return decode_text(self.tokenizer, ids)
 
-    def generate(self, prompt, max_new=96, temperature=0.7, top_k=40, rep_penalty=1.15):
+    def generate(self, prompt, max_new=96, temperature=0.9, top_k=40, rep_penalty=1.15):
         input_ids = self.encode(prompt)
         input_ids = input_ids[-256:]
         prompt_len = len(input_ids)
@@ -114,14 +96,14 @@ class Agent:
 
         return self.decode(tokens)
 
-    def _prompt(self, user_input, extra=None):
-        parts = [SYSTEM_PROMPT]
+    def _build_prompt(self, user_input, result=None):
+        parts = []
         for u, a in self.history[-2:]:
-            parts.append(f"User: {u}\n{a}")
-        parts.append(f"User: {user_input}\n")
-        if extra:
-            parts.append(f"[{extra}]\n")
-        parts.append("Assistant: ")
+            parts.append(u)
+            parts.append(a)
+        parts.append(user_input)
+        if result:
+            parts.append(result)
         return "\n".join(parts)
 
     def _detect_intent(self, text):
@@ -151,37 +133,32 @@ class Agent:
         return self.tools.call(name, **{param: value or '?'})
 
     def run(self, user_input):
-        # ── Mode 1: intent detection ─────────────────────────────
         intent = self._detect_intent(user_input)
         if intent:
             tool, param, value = intent
             result = self._execute(tool, param, value)
-            extra = f"{tool}: {result}"
-            response = self.generate(self._prompt(user_input, extra), max_new=96)
+            prompt = self._build_prompt(user_input, result)
+            response = self.generate(prompt, max_new=96)
             self.history.append((user_input, response))
             return response
 
-        # ── Mode 2: explicit command ─────────────────────────────
         cmd = self._parse_command(user_input)
         if cmd:
             tool, param, value = cmd
             result = self._execute(tool, param, value)
-            extra = f"{tool}({value}): {result}"
-            response = self.generate(self._prompt(user_input, extra), max_new=96)
+            prompt = self._build_prompt(user_input, result)
+            response = self.generate(prompt, max_new=96)
             self.history.append((user_input, response))
             return response
 
-        # ── Mode 3: normal conversation ─────────────────────────
-        response = self.generate(self._prompt(user_input), max_new=128)
+        prompt = self._build_prompt(user_input)
+        response = self.generate(prompt, max_new=128)
 
         suggestions = self._find_suggestions(response)
         if suggestions:
             for tool, param, value in suggestions:
                 result = self._execute(tool, param, value)
-                cont = self.generate(
-                    f"Assistant: {response}\n[{tool}: {result}]\nContinue: ",
-                    max_new=64,
-                )
+                cont = self.generate(result, max_new=64)
                 response += "\n" + cont
 
         self.history.append((user_input, response))

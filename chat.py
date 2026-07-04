@@ -146,8 +146,6 @@ if __name__ == "__main__":
     if model is None or tokenizer is None:
         exit(1)
 
-    history = []
-
     print("\n" + "=" * 50)
     print("AI Chat Ready! Type 'quit' to exit.")
     print("=" * 50 + "\n")
@@ -158,16 +156,8 @@ if __name__ == "__main__":
             if prompt.lower() in ["quit", "exit", "q"]:
                 break
 
-            parts = []
-            for u, a in history[-4:]:
-                parts.append(f"You: {u}")
-                parts.append(f"AI: {a}")
-            parts.append(f"You: {prompt}")
-            parts.append("AI: ")
-
-            response = generate(model, tokenizer, "\n".join(parts))
+            response = generate(model, tokenizer, prompt, temperature=0.9)
             print(f"AI: {response}\n")
-            history.append((prompt, response))
         except KeyboardInterrupt:
             print("\nBye!")
             break
