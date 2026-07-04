@@ -81,73 +81,98 @@ class ToolRegistry:
 
 
 def make_web_search_tool():
+    _HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+    def _has_arabic(text):
+        return bool(re.search(r'[\u0600-\u06FF]', text))
+
+    def _clean(text):
+        return re.sub(r'<[^>]+>', '', text).strip()
+
+    def _try_wikipedia(q, lang='en'):
+        domain = f'{lang}.wikipedia.org'
+        search_url = (
+            f'https://{domain}/w/api.php?'
+            f'action=opensearch&search={urllib.parse.quote(q)}&limit=3&format=json'
+        )
+        req = urllib.request.Request(search_url, headers=_HEADERS)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        titles = data[1] if len(data) > 1 else []
+        if not titles:
+            return None
+        try:
+            summary_url = (
+                f'https://{domain}/api/rest_v1/page/summary/'
+                f'{urllib.parse.quote(titles[0])}'
+            )
+            req2 = urllib.request.Request(summary_url, headers=_HEADERS)
+            with urllib.request.urlopen(req2, timeout=5) as resp:
+                s = json.loads(resp.read())
+            extract = s.get('extract', '')
+            if extract:
+                descs = data[2] if len(data) > 2 else []
+                parts = [extract]
+                for i in range(1, min(len(titles), 3)):
+                    d = descs[i] if i < len(descs) else ''
+                    if d:
+                        parts.append(f'\n{titles[i]}: {d}')
+                return '\n'.join(parts)
+        except Exception:
+            pass
+        descs = data[2] if len(data) > 2 else []
+        parts = []
+        for i in range(min(len(titles), 3)):
+            t = titles[i]
+            d = descs[i] if i < len(descs) else ''
+            parts.append(f'{t}: {d}' if d else t)
+        return '\n'.join(parts) if parts else None
+
+    def _try_ddg_instant(q):
+        url = f'https://api.duckduckgo.com/?q={urllib.parse.quote(q)}&format=json&no_html=1'
+        req = urllib.request.Request(url, headers=_HEADERS)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            d = json.loads(resp.read())
+        abstract = d.get('AbstractText', '')
+        if abstract:
+            return abstract
+        for topic in d.get('RelatedTopics', []):
+            if isinstance(topic, dict):
+                txt = topic.get('Text', '')
+                if txt:
+                    u = topic.get('FirstURL', '')
+                    return f'{u}\n{txt}' if u else txt
+        return None
+
+    def _extract_keywords(q):
+        q2 = re.sub(r'\b(what|is|are|the|best|how|to|do|does|can|i|a|an|in|of|for|2025|2024|2026)\b', '', q, flags=re.IGNORECASE)
+        q2 = re.sub(r'[?]', '', q2).strip()
+        return q2 if q2 else q
+
     def search(query):
         if not query or not query.strip():
-            return "Please provide a search query."
-
+            return 'Please provide a search query.'
         q = query.strip()
+        kw = _extract_keywords(q)
 
-        # Primary: Wikipedia API (clean, reliable text)
-        try:
-            search_url = (
-                "https://en.wikipedia.org/w/api.php?"
-                f"action=opensearch&search={urllib.parse.quote(q)}&limit=3&format=json"
-            )
-            with urllib.request.urlopen(search_url, timeout=5) as resp:
-                data = json.loads(resp.read())
+        attempts = [q, kw] if kw != q else [q]
+        if _has_arabic(q):
+            attempts += [q, kw] if kw != q else [q]
 
-            titles = data[1] if len(data) > 1 else []
-            descs = data[2] if len(data) > 2 else []
-
-            if titles:
+        for attempt in attempts:
+            for fn in [_try_wikipedia, _try_ddg_instant]:
                 try:
-                    summary_url = (
-                        f"https://en.wikipedia.org/api/rest_v1/page/summary/"
-                        f"{urllib.parse.quote(titles[0])}"
-                    )
-                    with urllib.request.urlopen(summary_url, timeout=5) as resp:
-                        summary_data = json.loads(resp.read())
-                    extract = summary_data.get("extract", "")
-                    if extract:
-                        parts = [extract]
-                        for i in range(1, min(len(titles), 3)):
-                            d = descs[i] if i < len(descs) else ""
-                            if d:
-                                parts.append(f"\n{titles[i]}: {d}")
-                        return _truncate("\n".join(parts))
+                    if fn == _try_wikipedia:
+                        lang = 'ar' if _has_arabic(attempt) else 'en'
+                        result = _try_wikipedia(attempt, lang)
+                    else:
+                        result = _try_ddg_instant(attempt)
+                    if result:
+                        return _truncate(result)
                 except Exception:
-                    pass
+                    continue
 
-                # Fallback within Wikipedia: show titles + descriptions
-                parts = []
-                for i in range(min(len(titles), 3)):
-                    t = titles[i]
-                    d = descs[i] if i < len(descs) else ""
-                    parts.append(f"{t}: {d}" if d else t)
-                if parts:
-                    return _truncate("\n".join(parts))
-        except Exception:
-            pass
-
-        # Fallback: DuckDuckGo instant answer
-        try:
-            url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(q)}&format=json&no_html=1"
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                d = json.loads(resp.read())
-
-            abstract = d.get("AbstractText", "")
-            if abstract:
-                return _truncate(abstract)
-
-            for topic in d.get("RelatedTopics", []):
-                if isinstance(topic, dict):
-                    txt = topic.get("Text", "")
-                    if txt:
-                        return _truncate(txt)
-        except Exception:
-            pass
-
-        return "No information found."
+        return 'No information found.'
 
     return Tool(
         name="web_search",
