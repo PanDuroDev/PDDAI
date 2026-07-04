@@ -112,7 +112,7 @@ class Agent:
             with torch.inference_mode():
                 logits, past = self.model(x, past_key_values=past, use_cache=True)
 
-        return self.decode(input_ids[prompt_len:])
+        return self.decode(tokens)
 
     def _prompt(self, user_input, extra=None):
         parts = [SYSTEM_PROMPT]

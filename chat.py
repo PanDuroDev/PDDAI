@@ -93,16 +93,18 @@ def load_model(checkpoint_path="checkpoints/last_model.pt", tokenizer_path="data
           f"{cfg['num_heads']}h/{cfg['num_kv_heads']}kv, {cfg['num_layers']}L, "
           f"{'tied' if cfg['tied_embeddings'] else 'untied'} emb | "
           f"refresh={cfg['refresh_layers']}")
+
+    tokenizer = load_tokenizer(tokenizer_path)
     return model, tokenizer
 
 
 def resolve_model_path(name):
     if name == "last":
-        return "checkpoints/last_model.pt"
+        return "saved_model/last_model.pt"
     elif name == "best":
-        return "checkpoints/best_model.pt"
+        return "saved_model/best_model.pt"
     elif name == "final":
-        return "checkpoints/checkpoint.pt"
+        return "saved_model/checkpoint.pt"
     else:
         return name
 
@@ -130,7 +132,7 @@ def generate(model, tokenizer, prompt, max_tokens=128, temperature=0.7, top_k=40
         with torch.inference_mode():
             logits, past = model(x, past_key_values=past, use_cache=True)
 
-    return decode_text(tokenizer, input_ids[prompt_len:])
+    return decode_text(tokenizer, tokens)
 
 
 if __name__ == "__main__":
