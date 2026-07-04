@@ -109,11 +109,8 @@ def resolve_model_path(name):
         return name
 
 
-def generate(model, tokenizer, prompt, max_tokens=128, temperature=0.7, top_k=40):
-    input_ids = encode_text(tokenizer, prompt)
-    input_ids = input_ids[-256:]
-    prompt_len = len(input_ids)
-
+def generate(model, tokenizer, prompt, max_tokens=128, temperature=0.9, top_k=40):
+    input_ids = encode_text(tokenizer, prompt)[-256:]
     x = torch.tensor([input_ids], dtype=torch.long)
     with torch.inference_mode():
         logits, past = model(x, use_cache=True)
@@ -156,8 +153,11 @@ if __name__ == "__main__":
             if prompt.lower() in ["quit", "exit", "q"]:
                 break
 
+            prompt_tok = len(encode_text(tokenizer, prompt))
             response = generate(model, tokenizer, prompt, temperature=0.9)
-            print(f"AI: {response}\n")
+            out_tok = len(encode_text(tokenizer, response))
+            print(f"AI: {response}")
+            print(f"     [{out_tok} tok, {prompt_tok}+{out_tok}]\n")
         except KeyboardInterrupt:
             print("\nBye!")
             break

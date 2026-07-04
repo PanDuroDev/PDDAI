@@ -56,7 +56,10 @@ class Agent:
             x = torch.tensor([[next_id]], dtype=torch.long).to(self.device)
             with torch.inference_mode():
                 logits, past = self.model(x, past_key_values=past, use_cache=True)
-        return self.decode(tokens)
+        return self.decode(tokens), len(tokens)
+
+    def _count_tokens(self, text):
+        return len(self.encode(text))
 
     def _parse_command(self, text):
         t = text.strip()
@@ -86,10 +89,10 @@ class Agent:
             tool, param, value = cmd
             result = self._execute(tool, param, value)
             prompt = f"{value} = {result}" if tool == 'calculator' else result
-            response = self.generate(prompt, max_new=96)
+            response, _ = self.generate(prompt, max_new=96)
             return response
 
-        response = self.generate(user_input, max_new=128)
+        response, _ = self.generate(user_input, max_new=128)
 
         suggestions = self._find_suggestions(response)
         if suggestions:
@@ -97,7 +100,7 @@ class Agent:
             response = re.sub(r' +', ' ', response)
             for tool, param, value in suggestions:
                 result = self._execute(tool, param, value)
-                cont = self.generate(result, max_new=64)
+                cont, _ = self.generate(result, max_new=64)
                 response += "\n" + cont
 
         return response
@@ -113,7 +116,11 @@ class Agent:
                 user = input("\nYou: ")
                 if user.lower() in ("quit", "exit", "q"):
                     break
-                print(f"AI: {self.run(user)}")
+                prompt_tok = self._count_tokens(user)
+                response = self.run(user)
+                out_tok = self._count_tokens(response)
+                print(f"AI: {response}")
+                print(f"     [{out_tok} tok, {prompt_tok}+{out_tok}]")
             except KeyboardInterrupt:
                 print("\nBye!")
                 break
