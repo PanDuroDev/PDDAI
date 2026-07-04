@@ -106,21 +106,17 @@ class Agent:
         return response
 
     def chat(self):
-        print("=" * 50)
-        print("Agent ready. Type 'quit' to exit.")
-        print("Tools: \\calculator  \\search  \\read")
-        print("=" * 50)
+        print("Tools: \\calculator  \\search  \\read  (quit to exit)")
 
         while True:
             try:
-                user = input("\nYou: ")
+                user = input("\n> ")
                 if user.lower() in ("quit", "exit", "q"):
                     break
                 prompt_tok = self._count_tokens(user)
                 response = self.run(user)
                 out_tok = self._count_tokens(response)
-                print(f"AI: {response}")
-                print(f"     [{out_tok} tok, {prompt_tok}+{out_tok}]")
+                print(f"{response}  [{out_tok}]")
             except KeyboardInterrupt:
                 print("\nBye!")
                 break

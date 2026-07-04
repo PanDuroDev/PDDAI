@@ -143,21 +143,18 @@ if __name__ == "__main__":
     if model is None or tokenizer is None:
         exit(1)
 
-    print("\n" + "=" * 50)
-    print("AI Chat Ready! Type 'quit' to exit.")
-    print("=" * 50 + "\n")
+    print("Chat ready. (quit to exit)")
 
     while True:
         try:
-            prompt = input("You: ")
+            prompt = input(">> ")
             if prompt.lower() in ["quit", "exit", "q"]:
                 break
 
             prompt_tok = len(encode_text(tokenizer, prompt))
             response = generate(model, tokenizer, prompt, temperature=0.9)
             out_tok = len(encode_text(tokenizer, response))
-            print(f"AI: {response}")
-            print(f"     [{out_tok} tok, {prompt_tok}+{out_tok}]\n")
+            print(f"{response}  [{out_tok}]")
         except KeyboardInterrupt:
             print("\nBye!")
             break
