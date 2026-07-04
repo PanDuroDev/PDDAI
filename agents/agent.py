@@ -93,6 +93,8 @@ class Agent:
 
         suggestions = self._find_suggestions(response)
         if suggestions:
+            response = re.sub(_SUGGEST_RE.pattern, '', response).strip()
+            response = re.sub(r' +', ' ', response)
             for tool, param, value in suggestions:
                 result = self._execute(tool, param, value)
                 cont = self.generate(result, max_new=64)
