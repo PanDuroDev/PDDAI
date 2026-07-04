@@ -81,7 +81,9 @@ class Agent:
         return results
 
     def _execute(self, name, param, value):
-        return self.tools.call(name, **{param: value or '?'})
+        if not value or not value.strip():
+            value = ''
+        return self.tools.call(name, **{param: value})
 
     def run(self, user_input):
         cmd = self._parse_command(user_input)
