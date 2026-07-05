@@ -27,3 +27,13 @@ Thumbs.db
 
 # Temp test files
 test_*.py
+
+# API keys / local config
+agents/.agent_config.json
+
+# Training conversations (user data)
+training_conversations/
+
+# Logs
+stderr.txt
+stdout.txt

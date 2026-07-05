@@ -140,9 +140,10 @@ def _progress_bar(current, total, loss, lr, speed, eta, elapsed, tok_per_sec, ba
     bar = '#' * filled + '.' * (bar_len - filled)
     pct = frac * 100
     ms_batch = 1000 / max(0.001, speed)
-    return (f"  |{bar}| {pct:6.2f}% | batch {current:>5}/{total} "
+    line = (f"  |{bar}| {pct:6.2f}% | batch {current:>5}/{total} "
             f"| loss {loss:.4f} | lr {lr:.1e} "
             f"| {speed:.2f} b/s | {tok_per_sec:.0f} t/s | {ms_batch:.0f}ms | ETA {eta}")
+    return line.ljust(100)
 
 
 def _build_model_config(model):
@@ -370,8 +371,8 @@ def train_model(model, dataloader, device, val_dataloader=None, seq_len=512,
                         window_speed = len(batch_timestamps) / max(0.001, batch_timestamps[-1] - batch_timestamps[0])
                     else:
                         window_speed = batch_count / max(1, now - t_start)
-                    remaining_batches = (epochs - epoch - 1) * total_batches + (total_batches - batch_idx - 1)
-                    eta_remaining = remaining_batches / max(0.001, window_speed)
+                    epoch_remaining = total_batches - batch_idx - 1
+                    eta_remaining = epoch_remaining / max(0.001, window_speed)
                     current_lr = optimizer.param_groups[1]['lr'] if len(optimizer.param_groups) > 1 else scheduler.get_last_lr()[0]
                     tok_per_sec_now = window_speed * dataloader.batch_size * seq_len
                     print(_progress_bar(

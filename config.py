@@ -44,6 +44,11 @@ USE_TORCH_COMPILE = False  # torch.compile (Linux/WSL2 recommended)
 # Auto-tuning: overrides BATCH_SIZE, GRAD_ACCUM_STEPS, num_workers, AMP
 AUTO_TUNE = True
 
+# 9Router API (for summarizing web search results before feeding to local model)
+NROUTER_API_URL = "http://localhost:20128/v1"
+NROUTER_API_KEY = ""
+NROUTER_MODEL = "my-combo"
+
 # Checkpoint / Save settings
 SAVE_LAST_MODEL = True  # Save last_model.pt after each epoch
 SAVE_BEST_MODEL = True  # Save best_model.pt when val_loss improves

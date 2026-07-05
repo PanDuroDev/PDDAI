@@ -82,101 +82,163 @@ class ToolRegistry:
 
 def make_web_search_tool():
     _HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    _SEARCH_ENGINES = [
+        'https://lite.duckduckgo.com/lite/?q=',
+        'https://html.duckduckgo.com/html/?q=',
+    ]
+    _SCRAPE_TIMEOUT = 6
 
     def _has_arabic(text):
         return bool(re.search(r'[\u0600-\u06FF]', text))
 
-    def _clean(text):
-        return re.sub(r'<[^>]+>', '', text).strip()
+    def _fetch(url):
+        req = urllib.request.Request(url, headers=_HEADERS)
+        with urllib.request.urlopen(req, timeout=_SCRAPE_TIMEOUT) as resp:
+            return resp.read().decode('utf-8', errors='replace')
+
+    def _extract_text(html):
+        html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
+        html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
+        html = re.sub(r'<[^>]+>', ' ', html)
+        html = re.sub(r'&[a-z]+;', ' ', html)
+        html = re.sub(r'\s+', ' ', html).strip()
+        return html
+
+    def _scrape_page(url):
+        try:
+            html = _fetch(url)
+            text = _extract_text(html)
+            lines = [l.strip() for l in text.split('\n') if len(l.strip()) > 40]
+            return '\n'.join(lines[:_MAX_SUMMARY_LINES])
+        except Exception:
+            return None
 
     def _try_wikipedia(q, lang='en'):
         domain = f'{lang}.wikipedia.org'
-        search_url = (
-            f'https://{domain}/w/api.php?'
-            f'action=opensearch&search={urllib.parse.quote(q)}&limit=3&format=json'
-        )
-        req = urllib.request.Request(search_url, headers=_HEADERS)
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read())
-        titles = data[1] if len(data) > 1 else []
-        if not titles:
-            return None
         try:
-            summary_url = (
-                f'https://{domain}/api/rest_v1/page/summary/'
-                f'{urllib.parse.quote(titles[0])}'
-            )
-            req2 = urllib.request.Request(summary_url, headers=_HEADERS)
-            with urllib.request.urlopen(req2, timeout=5) as resp:
-                s = json.loads(resp.read())
-            extract = s.get('extract', '')
-            if extract:
-                descs = data[2] if len(data) > 2 else []
-                parts = [extract]
-                for i in range(1, min(len(titles), 3)):
-                    d = descs[i] if i < len(descs) else ''
-                    if d:
-                        parts.append(f'\n{titles[i]}: {d}')
-                return '\n'.join(parts)
+            html = _fetch(f'https://{domain}/wiki/{urllib.parse.quote(q.replace(" ", "_"))}')
+            text = _extract_text(html)
+            paragraphs = [l.strip() for l in text.split('\n') if len(l.strip()) > 60]
+            result = '\n'.join(paragraphs[:_MAX_SUMMARY_LINES])
+            if len(result) > 200:
+                return result
         except Exception:
             pass
-        descs = data[2] if len(data) > 2 else []
-        parts = []
-        for i in range(min(len(titles), 3)):
-            t = titles[i]
-            d = descs[i] if i < len(descs) else ''
-            parts.append(f'{t}: {d}' if d else t)
-        return '\n'.join(parts) if parts else None
+        try:
+            url = f'https://{domain}/w/api.php?action=opensearch&search={urllib.parse.quote(q)}&limit=5&format=json'
+            data = json.loads(_fetch(url))
+            titles = data[1] if len(data) > 1 else []
+            if not titles:
+                return None
+            parts = []
+            for title in titles[:3]:
+                try:
+                    su = f'https://{domain}/api/rest_v1/page/summary/{urllib.parse.quote(title)}'
+                    s = json.loads(_fetch(su))
+                    ext = s.get('extract', '')
+                    if ext:
+                        parts.append(f'{title}: {ext}')
+                except Exception:
+                    pass
+            return '\n\n'.join(parts) if parts else None
+        except Exception:
+            return None
 
     def _try_ddg_instant(q):
-        url = f'https://api.duckduckgo.com/?q={urllib.parse.quote(q)}&format=json&no_html=1'
-        req = urllib.request.Request(url, headers=_HEADERS)
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            d = json.loads(resp.read())
-        abstract = d.get('AbstractText', '')
-        if abstract:
-            return abstract
-        for topic in d.get('RelatedTopics', []):
-            if isinstance(topic, dict):
-                txt = topic.get('Text', '')
-                if txt:
-                    u = topic.get('FirstURL', '')
-                    return f'{u}\n{txt}' if u else txt
+        try:
+            url = f'https://api.duckduckgo.com/?q={urllib.parse.quote(q)}&format=json&no_html=1'
+            d = json.loads(_fetch(url))
+            abstract = d.get('AbstractText', '')
+            if abstract:
+                return abstract
+            results = []
+            for topic in d.get('RelatedTopics', []):
+                if isinstance(topic, dict):
+                    txt = topic.get('Text', '')
+                    if txt:
+                        results.append(txt)
+                elif isinstance(topic, list):
+                    for sub in topic:
+                        if isinstance(sub, dict):
+                            txt = sub.get('Text', '')
+                            if txt:
+                                results.append(txt)
+            return '\n'.join(results[:_MAX_RESULTS]) if results else None
+        except Exception:
+            return None
+
+    def _try_html_search(q):
+        for base in _SEARCH_ENGINES:
+            try:
+                html = _fetch(base + urllib.parse.quote(q))
+                text = _extract_text(html)
+                snippets = re.findall(r'(?:^|\n)([A-Z][^.]{50,}\.)', text)
+                results = [s.strip() for s in snippets if len(s.strip()) > 60]
+                if results:
+                    return '\n'.join(results[:_MAX_RESULTS])
+            except Exception:
+                continue
         return None
 
     def _extract_keywords(q):
-        q2 = re.sub(r'\b(what|is|are|the|best|how|to|do|does|can|i|a|an|in|of|for|2025|2024|2026)\b', '', q, flags=re.IGNORECASE)
+        q2 = re.sub(r'\b(what|is|are|the|best|how|to|do|does|can|i|a|an|in|of|for|with|from|about)\b', '', q, flags=re.IGNORECASE)
         q2 = re.sub(r'[?]', '', q2).strip()
         return q2 if q2 else q
+
+    _MAX_RESULTS = 5
+    _MAX_SUMMARY_LINES = 30
 
     def search(query):
         if not query or not query.strip():
             return 'Please provide a search query.'
         q = query.strip()
         kw = _extract_keywords(q)
+        attempts = list(dict.fromkeys([q, kw])) if kw != q else [q]
 
-        attempts = [q, kw] if kw != q else [q]
-        if _has_arabic(q):
-            attempts += [q, kw] if kw != q else [q]
+        sources = []
 
-        for attempt in attempts:
-            for fn in [_try_wikipedia, _try_ddg_instant]:
+        langs = ['ar', 'en'] if _has_arabic(q) else ['en', 'ar']
+
+        for lang in langs:
+            for attempt in attempts:
                 try:
-                    if fn == _try_wikipedia:
-                        lang = 'ar' if _has_arabic(attempt) else 'en'
-                        result = _try_wikipedia(attempt, lang)
-                    else:
-                        result = _try_ddg_instant(attempt)
-                    if result:
-                        return _truncate(result)
+                    r = _try_wikipedia(attempt, lang)
+                    if r:
+                        sources.append(('Wikipedia', r))
+                        break
                 except Exception:
                     continue
 
-        return 'No information found.'
+        for attempt in attempts:
+            try:
+                r = _try_ddg_instant(attempt)
+                if r:
+                    sources.append(('DuckDuckGo', r))
+                    break
+            except Exception:
+                continue
+
+        for attempt in attempts:
+            try:
+                r = _try_html_search(attempt)
+                if r:
+                    sources.append(('Web', r))
+                    break
+            except Exception:
+                continue
+
+        if not sources:
+            return 'No information found.'
+
+        parts = []
+        for src, content in sources:
+            truncated = _truncate(content, _RESULT_MAX_CHARS)
+            parts.append(f'[Source: {src}]\n{truncated}')
+        return '\n\n---\n\n'.join(parts)
 
     return Tool(
         name="web_search",
-        description="Search the web for information about any topic.",
+        description="Search the web for information about any topic. Supports complex multi-word queries in any language.",
         func=search,
         parameters={
             "query": {"type": "string", "description": "search query", "required": True},

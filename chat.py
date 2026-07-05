@@ -1,4 +1,9 @@
 import sys
+import threading
+import time
+import json
+import urllib.request
+from datetime import datetime
 if not __import__('importlib').util.find_spec('torch'):
     sys.path.insert(0, 'D:\\torch_site')
 
@@ -6,6 +11,45 @@ import torch
 import os
 from models.transformer import TransformerModel
 from data.tokenizer import load_tokenizer, encode_text, decode_text
+import config
+
+
+class Spinner:
+    _spin_chars = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+
+    def __init__(self, message=''):
+        self.message = message
+        self.running = False
+        self._thread = None
+        self._start = 0.0
+
+    def start(self):
+        self._start = time.time()
+        self.running = True
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def _spin(self):
+        i = 0
+        while self.running:
+            sys.stdout.write(f'\r{self._spin_chars[i]} {self.message}   ')
+            sys.stdout.flush()
+            i = (i + 1) % len(self._spin_chars)
+            time.sleep(0.12)
+
+    def stop(self, done=''):
+        elapsed = time.time() - self._start
+        if elapsed < 1:
+            label = f'{elapsed*1000:.0f}ms'
+        elif elapsed < 60:
+            label = f'{elapsed:.1f}s'
+        else:
+            label = f'{elapsed//60:.0f}m {elapsed%60:.0f}s'
+        self.running = False
+        if self._thread:
+            self._thread.join(timeout=0.25)
+        sys.stdout.write(f'\r{label} {self.message}   \n')
+        sys.stdout.flush()
 
 
 def infer_config_from_state(checkpoint):
@@ -109,7 +153,7 @@ def resolve_model_path(name):
         return name
 
 
-def generate(model, tokenizer, prompt, max_tokens=128, temperature=0.9, top_k=40):
+def generate(model, tokenizer, prompt, max_tokens=128, temperature=0.9, top_k=40, rep_penalty=1.15, on_token=None):
     input_ids = encode_text(tokenizer, prompt)[-256:]
     x = torch.tensor([input_ids], dtype=torch.long)
     with torch.inference_mode():
@@ -118,18 +162,85 @@ def generate(model, tokenizer, prompt, max_tokens=128, temperature=0.9, top_k=40
     tokens = []
     for i in range(max_tokens):
         logits = logits[:, -1, :] / temperature
+        if rep_penalty > 1.0 and tokens:
+            for tid in set(tokens[-8:]):
+                txt = decode_text(tokenizer, [tid]).strip()
+                if txt and (txt[0].isalnum() or txt[0].isalpha()):
+                    logits[0, tid] /= rep_penalty
         if top_k > 0:
             top_vals, _ = torch.topk(logits, top_k, dim=-1)
             logits[logits < top_vals[:, -1:]] = float('-inf')
         next_id = torch.multinomial(torch.softmax(logits, dim=-1), 1).item()
         tokens.append(next_id)
+        if on_token:
+            on_token(decode_text(tokenizer, [next_id]))
         if next_id == tokenizer.token_to_id("</s>"):
             break
         x = torch.tensor([[next_id]], dtype=torch.long)
         with torch.inference_mode():
             logits, past = model(x, past_key_values=past, use_cache=True)
 
-    return decode_text(tokenizer, tokens)
+    return decode_text(tokenizer, tokens), len(tokens)
+
+
+def _format_training_data(conversation):
+    url = config.NROUTER_API_URL
+    key = config.NROUTER_API_KEY
+    model = getattr(config, 'NROUTER_MODEL', '') or ''
+    if not url:
+        return None
+    lines = []
+    for user_msg, ai_msg in conversation:
+        lines.append(f'User: {user_msg}')
+        lines.append(f'Assistant: {ai_msg}')
+    text = '\n'.join(lines)
+    api_url = f'{url}/chat/completions'
+    body = {"messages": [{"role": "user", "content": f"Format this conversation as clean training data. Correct factual errors while keeping the original meaning. Output only the formatted conversation with User:/Assistant: markers.\n\n{text}"}], "max_tokens": 512}
+    if model:
+        body['model'] = model
+    try:
+        req = urllib.request.Request(api_url, data=json.dumps(body).encode(),
+                                     headers={'Content-Type': 'application/json'})
+        if key:
+            req.add_header('Authorization', f'Bearer {key}')
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode()
+        try:
+            result = json.loads(raw)
+            return result['choices'][0]['message']['content']
+        except (json.JSONDecodeError, KeyError):
+            content = ''
+            for line in raw.split('\n'):
+                line = line.strip()
+                if line.startswith('data: ') and line != 'data: [DONE]':
+                    try:
+                        chunk = json.loads(line[6:])
+                        delta = chunk.get('choices', [{}])[0].get('delta', {})
+                        if 'content' in delta:
+                            content += delta['content']
+                    except json.JSONDecodeError:
+                        continue
+            if content:
+                return content
+        return text
+    except Exception:
+        return None
+
+
+def _save_conversation(conversation):
+    if not conversation:
+        return
+    out_dir = 'training_conversations'
+    os.makedirs(out_dir, exist_ok=True)
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    path = os.path.join(out_dir, f'conversation_{ts}.txt')
+    spinner = Spinner('Formatting conversation for training')
+    spinner.start()
+    data = _format_training_data(conversation)
+    spinner.stop()
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(data if data else '\n'.join(f'User: {u}\nAssistant: {a}' for u, a in conversation))
+    print(f'Saved: {path}')
 
 
 if __name__ == "__main__":
@@ -143,9 +254,7 @@ if __name__ == "__main__":
     if model is None or tokenizer is None:
         exit(1)
 
-    print("Chat ready. (quit to exit)")
-
-    print("--- Chat ---")
+    conversation = []
 
     while True:
         try:
@@ -153,10 +262,18 @@ if __name__ == "__main__":
             if prompt.lower() in ["quit", "exit", "q"]:
                 break
 
-            prompt_tok = len(encode_text(tokenizer, prompt))
-            response = generate(model, tokenizer, prompt, temperature=0.9)
-            out_tok = len(encode_text(tokenizer, response))
-            print(f"AI: {response}  [{out_tok}]\n")
+            sys.stdout.write('AI: ')
+            sys.stdout.flush()
+            tokens = []
+            def on_token(t):
+                tokens.append(t)
+                sys.stdout.write(t)
+                sys.stdout.flush()
+            response, _ = generate(model, tokenizer, prompt, temperature=0.9, on_token=on_token)
+            print('\n')
+            conversation.append((prompt, response))
         except KeyboardInterrupt:
             print("\nBye!")
             break
+
+    _save_conversation(conversation)
