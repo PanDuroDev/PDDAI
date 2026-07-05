@@ -28,6 +28,12 @@ class Colors:
     DIM = '\033[2m'
 
 
+CNAME = {
+    'primary': 'PRIMARY', 'accent': 'ACCENT', 'text': 'TEXT',
+    'muted': 'TEXT_MUTED', 'success': 'SUCCESS', 'warning': 'WARNING',
+    'error': 'ERROR', 'bg': 'BG',
+}
+
 def color(*args):
     out = ''
     for a in args:
@@ -35,8 +41,8 @@ def color(*args):
             out += Colors.BOLD
         elif a == 'dim':
             out += Colors.DIM
-        elif isinstance(a, str) and hasattr(Colors, a.upper()):
-            out += getattr(Colors, a.upper())
+        elif isinstance(a, str) and a in CNAME:
+            out += getattr(Colors, CNAME[a])
         else:
             out += str(a)
     return out + Colors.RESET
@@ -357,9 +363,11 @@ if __name__ == "__main__":
     param_mb = total_params * 4 / (1024 * 1024)
 
     print()
-    print(color('primary', 'bold', f'  ╭─ PDDAI ─╮'))
-    print(color('primary', f'  │ {total_params/1e6:.2f}M params │'))
-    print(color('primary', 'bold', f'  ╰─────────╯'))
+    lbl = f'{total_params/1e6:.2f}M params'
+    w = max(len(lbl) + 2, 14)
+    print(color('primary', 'bold', f'  ╭─ PDDAI {"─" * (w - 8)}╮'))
+    print(color('primary', f'  │ {lbl} │'))
+    print(color('primary', 'bold', f'  ╰{"─" * w}╯'))
     print(color('muted', f'  {model.embed_dim}d · {model.num_heads}h/{model.num_kv_heads}kv · {model.num_layers}L · {model.token_emb.weight.shape[0]} vocab'))
     print()
 
@@ -392,27 +400,12 @@ if __name__ == "__main__":
 
             print_box('You', inp, 'accent')
 
-            st = {'top': False, 'buf': '', 'lines': []}
-            def on_token(t):
-                if not st['top']:
-                    sys.stdout.write(box_top('PDDAI', 'primary') + '\n')
-                    st['top'] = True
-                sys.stdout.write(t)
-                sys.stdout.flush()
-                st['lines'].append(t)
+            sp = Spinner('Generating')
+            sp.start()
+            response, _ = generate(model, tokenizer, inp, temperature=0.9)
+            sp.stop()
 
-            response, _ = generate(model, tokenizer, inp, temperature=0.9, on_token=on_token)
-
-            full = ''.join(st['lines'])
-            if st['top']:
-                wlines = wrap(full, W - 3)
-                sys.stdout.write('\r' + ' ' * (W + 4) + '\r')
-                for line in wlines:
-                    print(box_line(line, 'text'))
-                print(box_bottom('primary'))
-            else:
-                print_box('PDDAI', full, 'primary', 'text')
-
+            print_box('PDDAI', response, 'primary', 'text')
             print()
             conversation.append((inp, response))
         except KeyboardInterrupt:
