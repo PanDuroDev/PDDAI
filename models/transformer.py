@@ -145,6 +145,10 @@ class TransformerModel(nn.Module):
                  refresh_layers=None):
         super().__init__()
         self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
+        self.num_layers = num_layers
+        self.refresh_layers = refresh_layers or []
         self.tied_embeddings = tied_embeddings
         self.token_emb = nn.Embedding(vocab_size, embed_dim)
 
