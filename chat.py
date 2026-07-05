@@ -347,13 +347,15 @@ def show_model_info(model):
     print()
 
 
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Chat with a trained model")
-    parser.add_argument("--model", type=str, default="last",
-                        help="Model to load: 'last', 'best', 'final', or a file path")
-    args = parser.parse_args()
-    path = resolve_model_path(args.model)
+def main(model_arg=None):
+    if model_arg is None:
+        import argparse
+        parser = argparse.ArgumentParser(description="Chat with a trained model")
+        parser.add_argument("--model", type=str, default="last",
+                            help="Model to load: 'last', 'best', 'final', or a file path")
+        args = parser.parse_args()
+        model_arg = args.model
+    path = resolve_model_path(model_arg)
 
     spinner = Spinner('Loading model')
     spinner.start()
@@ -419,3 +421,7 @@ if __name__ == "__main__":
             break
 
     _save_conversation(conversation)
+
+
+if __name__ == "__main__":
+    main()

@@ -164,5 +164,24 @@ def main():
         _save_conversation(conversation)
 
 
+def main_cli(model_arg='last', tokenizer_arg='data/tokenizer.json'):
+    path = resolve_model_path(model_arg)
+    spinner = Spinner('Loading model')
+    spinner.start()
+    model, tokenizer = load_model(path, tokenizer_arg)
+    spinner.stop()
+    if model is None or tokenizer is None:
+        exit(1)
+    print(color('muted', '  You send ONE message, then the two models talk.'))
+    seed = input(color('accent', '> '))
+    conversation = [('User', seed)]
+    try:
+        ai2ai(model, tokenizer, seed, turns=12, delay_range=(3.0, 5.0), conversation=conversation)
+    except KeyboardInterrupt:
+        print(color('muted', '\n  Interrupted.'))
+    finally:
+        _save_conversation(conversation)
+
+
 if __name__ == '__main__':
     main()
