@@ -48,28 +48,30 @@ def color(*args):
     return out + Colors.RESET
 
 
-W = 72
-def sep(c='muted'):
-    return color(c, '  ', '─' * W)
+def term_w():
+    try:
+        return os.get_terminal_size().columns
+    except Exception:
+        return 80
 
+IW = term_w() - 6
 
 def box_top(title, c='primary'):
-    tl = f'┌─ {title} '
-    pad = W - len(title) - 3
-    if pad < 0:
+    pad = IW - len(title) - 4
+    if pad < 2:
         pad = 2
-    return color(c, f'  {tl}{"─" * pad}┐')
+    return color(c, f'  ┌─ {title} {"─" * pad}┐')
 
 
 def box_bottom(c='primary'):
-    return color(c, f'  └─{"─" * (W - 1)}┘')
+    return color(c, f'  └─{"─" * (IW - 2)}┘')
 
 
 def box_line(text='', c='text'):
-    pad = W - len(text)
+    pad = IW - 3 - len(text)
     if pad < 0:
         pad = 0
-    return color(c, f'  │ {text}{" " * pad}│')
+    return color(c, f'  │ {text}{" " * pad} │')
 
 
 def wrap(text, width):
@@ -92,7 +94,7 @@ def wrap(text, width):
 
 
 def box_content(title, text, c='primary', tc='text'):
-    lines = wrap(text, W - 3)
+    lines = wrap(text, IW - 3)
     out = box_top(title, c) + '\n'
     for line in lines:
         out += box_line(line, tc) + '\n'
