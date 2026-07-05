@@ -14,6 +14,48 @@ from data.tokenizer import load_tokenizer, encode_text, decode_text
 import config
 
 
+class Colors:
+    PRIMARY = '\033[38;2;136;192;208m'
+    SECONDARY = '\033[38;2;129;161;193m'
+    ACCENT = '\033[38;2;143;188;187m'
+    TEXT = '\033[38;2;216;222;233m'
+    TEXT_MUTED = '\033[38;2;76;86;106m'
+    SUCCESS = '\033[38;2;163;190;140m'
+    WARNING = '\033[38;2;208;135;112m'
+    ERROR = '\033[38;2;191;97;106m'
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
+    DIM = '\033[2m'
+
+
+def style(primary, *parts):
+    out = ''
+    for p in parts:
+        if p == 'bold':
+            out += Colors.BOLD
+        elif p == 'dim':
+            out += Colors.DIM
+        elif p == 'primary':
+            out += Colors.PRIMARY
+        elif p == 'secondary':
+            out += Colors.SECONDARY
+        elif p == 'accent':
+            out += Colors.ACCENT
+        elif p == 'text':
+            out += Colors.TEXT
+        elif p == 'muted':
+            out += Colors.TEXT_MUTED
+        elif p == 'success':
+            out += Colors.SUCCESS
+        elif p == 'warning':
+            out += Colors.WARNING
+        elif p == 'error':
+            out += Colors.ERROR
+        else:
+            out += str(p)
+    return out + Colors.RESET
+
+
 class Spinner:
     _spin_chars = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 
@@ -32,7 +74,7 @@ class Spinner:
     def _spin(self):
         i = 0
         while self.running:
-            sys.stdout.write(f'\r{self._spin_chars[i]} {self.message}   ')
+            sys.stdout.write(f'\r{Colors.PRIMARY}{self._spin_chars[i]} {self.message}{Colors.RESET}   ')
             sys.stdout.flush()
             i = (i + 1) % len(self._spin_chars)
             time.sleep(0.12)
@@ -48,14 +90,11 @@ class Spinner:
         self.running = False
         if self._thread:
             self._thread.join(timeout=0.25)
-        sys.stdout.write(f'\r{label} {self.message}   \n')
+        sys.stdout.write(f'\r{Colors.TEXT_MUTED}{label}{Colors.RESET} {Colors.DIM}{self.message}{Colors.RESET}   \n')
         sys.stdout.flush()
 
 
 def infer_config_from_state(checkpoint):
-    """Infer model architecture from checkpoint.
-    `checkpoint` is the full dict (not just state_dict).
-    First tries 'model_config' metadata, falls back to inference from weights."""
     if 'model_config' in checkpoint:
         cfg = dict(checkpoint['model_config'])
         if 'vocab_size' not in cfg:
@@ -104,7 +143,7 @@ def infer_config_from_state(checkpoint):
 
 def load_model(checkpoint_path="checkpoints/last_model.pt", tokenizer_path="data/tokenizer.json"):
     if not os.path.exists(checkpoint_path):
-        print(f"Checkpoint not found: {checkpoint_path}")
+        print(style('error', 'error', 'bold', ' ✗ Checkpoint not found: ', checkpoint_path))
         return None, None
 
     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
@@ -124,21 +163,14 @@ def load_model(checkpoint_path="checkpoints/last_model.pt", tokenizer_path="data
     )
     result = model.load_state_dict(state, strict=False)
     if result.missing_keys:
-        print(f"  WARNING: Missing keys: {result.missing_keys}")
+        print(style('warning', 'warning', ' ⚠ Missing keys: ', str(result.missing_keys)))
     if result.unexpected_keys:
-        print(f"  WARNING: Unexpected keys: {result.unexpected_keys}")
+        print(style('warning', 'warning', ' ⚠ Unexpected keys: ', str(result.unexpected_keys)))
     if cfg['tied_embeddings']:
         model.head.weight = model.token_emb.weight
     model.eval()
     total_params = sum(p.numel() for p in model.parameters())
     param_mb = total_params * 4 / (1024 * 1024)
-    print(f"Model: {total_params/1e6:.2f}M parameters ({param_mb:.0f}MB) | "
-          f"{cfg['vocab_size']} vocab, {cfg['embed_dim']}d, "
-          f"{cfg['num_heads']}h/{cfg['num_kv_heads']}kv, {cfg['num_layers']}L, "
-          f"{'tied' if cfg['tied_embeddings'] else 'untied'} emb | "
-          f"refresh={cfg['refresh_layers']}")
-
-    tokenizer = load_tokenizer(tokenizer_path)
     return model, tokenizer
 
 
@@ -240,7 +272,34 @@ def _save_conversation(conversation):
     spinner.stop()
     with open(path, 'w', encoding='utf-8') as f:
         f.write(data if data else '\n'.join(f'User: {u}\nAssistant: {a}' for u, a in conversation))
-    print(f'Saved: {path}')
+    print(style('muted', '  └─ saved: ', path))
+
+
+def show_help():
+    print()
+    print(style('primary', 'bold', '  Commands'))
+    print(style('muted', '  ─────────'))
+    print(style('text', '    /exit, /quit, /q    Exit the program'))
+    print(style('text', '    /help               Show this help'))
+    print(style('text', '    /model              Show model info'))
+    print(style('text', '    /clear              Clear the screen'))
+    print()
+
+
+def show_model_info(cfg):
+    params_str = f'{cfg["total_params"]/1e6:.2f}M'
+    mb_str = f'({cfg["param_mb"]:.0f}MB)'
+    arch_str = f'{cfg["embed_dim"]}d, {cfg["num_heads"]}h/{cfg["num_kv_heads"]}kv, {cfg["num_layers"]}L'
+    emb_str = 'tied' if cfg['tied_embeddings'] else 'untied'
+    print()
+    print(style('primary', 'bold', '  Model'))
+    print(style('muted', '  ─────────'))
+    print(style('text', f'    Parameters: {style("accent", "bold", params_str)} {style("muted", mb_str)}'))
+    print(style('text', f'    Architecture: {style("accent", arch_str)}'))
+    print(style('text', f'    Vocab: {style("accent", str(cfg["vocab_size"]))}'))
+    print(style('text', f'    Embeddings: {style("accent", emb_str)}'))
+    print(style('text', f'    Refresh layers: {style("accent", str(cfg["refresh_layers"]))}'))
+    print()
 
 
 if __name__ == "__main__":
@@ -250,30 +309,75 @@ if __name__ == "__main__":
                         help="Model to load: 'last', 'best', 'final', or a file path")
     args = parser.parse_args()
     path = resolve_model_path(args.model)
+
+    spinner = Spinner('Loading model')
+    spinner.start()
     model, tokenizer = load_model(checkpoint_path=path)
     if model is None or tokenizer is None:
+        spinner.stop()
         exit(1)
+    total_params = sum(p.numel() for p in model.parameters())
+    param_mb = total_params * 4 / (1024 * 1024)
+    spinner.stop()
+
+    cfg_info = {
+        'total_params': total_params,
+        'param_mb': param_mb,
+        'vocab_size': model.token_emb.weight.shape[0],
+        'embed_dim': model.token_emb.weight.shape[1],
+        'num_heads': model.num_heads,
+        'num_kv_heads': model.num_kv_heads,
+        'num_layers': model.num_layers,
+        'tied_embeddings': model.head.weight is model.token_emb.weight,
+        'refresh_layers': getattr(model, 'refresh_layers', []),
+    }
+
+    print()
+    print(style('primary', 'bold', f'  ╭─ PDDAI ─╮'))
+    print(style('primary', f'  │ {total_params/1e6:.2f}M params │'))
+    print(style('primary', 'bold', f'  ╰─────────╯'))
+    print(style('muted', f'  {cfg_info["embed_dim"]}d · {cfg_info["num_heads"]}h/{cfg_info["num_kv_heads"]}kv · {cfg_info["num_layers"]}L · {cfg_info["vocab_size"]} vocab'))
+    print()
 
     conversation = []
 
     while True:
         try:
-            prompt = input("You: ")
-            if prompt.lower() in ["quit", "exit", "q"]:
-                break
+            inp = input(style('primary', 'bold', '> '))
+            if not inp.strip():
+                continue
 
-            sys.stdout.write('AI: ')
+            if inp.startswith('/'):
+                cmd = inp[1:].strip().lower()
+                if cmd in ('exit', 'quit', 'q'):
+                    print(style('muted', '  exiting...'))
+                    break
+                elif cmd == 'help':
+                    show_help()
+                    continue
+                elif cmd == 'model':
+                    show_model_info(cfg_info)
+                    continue
+                elif cmd == 'clear':
+                    os.system('cls' if os.name == 'nt' else 'clear')
+                    continue
+                else:
+                    print(style('error', f'  unknown command: /{cmd}'))
+                    print(style('muted', '  try /help'))
+                    continue
+
+            sys.stdout.write(style('text', '  '))
             sys.stdout.flush()
             tokens = []
             def on_token(t):
                 tokens.append(t)
                 sys.stdout.write(t)
                 sys.stdout.flush()
-            response, _ = generate(model, tokenizer, prompt, temperature=0.9, on_token=on_token)
+            response, _ = generate(model, tokenizer, inp, temperature=0.9, on_token=on_token)
             print('\n')
-            conversation.append((prompt, response))
+            conversation.append((inp, response))
         except KeyboardInterrupt:
-            print("\nBye!")
+            print(style('muted', '\n  exiting...'))
             break
 
     _save_conversation(conversation)
