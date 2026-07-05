@@ -54,7 +54,7 @@ def term_w():
     except Exception:
         return 80
 
-IW = term_w() - 6
+IW = min(term_w() - 6, 88)
 
 def box_top(title, c='primary'):
     pad = IW - len(title) - 4
@@ -75,21 +75,23 @@ def box_line(text='', c='text'):
 
 
 def wrap(text, width):
-    words = text.split(' ')
+    if not text:
+        return ['']
     lines = []
-    cur = ''
-    for w in words:
-        if w == '\n':
+    for para in text.split('\n'):
+        words = para.split(' ')
+        cur = ''
+        for w in words:
+            if not w:
+                continue
+            if len(cur) + len(w) + 1 <= width:
+                cur = (cur + ' ' + w).strip()
+            else:
+                if cur:
+                    lines.append(cur)
+                cur = w
+        if cur:
             lines.append(cur)
-            cur = ''
-        elif len(cur) + len(w) + 1 <= width:
-            cur = (cur + ' ' + w).strip()
-        else:
-            if cur:
-                lines.append(cur)
-            cur = w
-    if cur:
-        lines.append(cur)
     return lines or ['']
 
 
@@ -407,7 +409,8 @@ if __name__ == "__main__":
             response, _ = generate(model, tokenizer, inp, temperature=0.9)
             sp.stop()
 
-            print_box('PDDAI', response, 'primary', 'text')
+            disp = response.strip()
+            print_box('PDDAI', disp, 'primary', 'text')
             print()
             conversation.append((inp, response))
         except KeyboardInterrupt:
