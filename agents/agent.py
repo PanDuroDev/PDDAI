@@ -556,10 +556,11 @@ class Agent:
         total_params = sum(p.numel() for p in self.model.parameters()) / 1e6
         print()
         lbl = f'{total_params:.2f}M params'
-        w = max(len(lbl) + 2, 14)
-        print(color('primary', 'bold', f'  ╭─ PDDAI Agent {"─" * (w - 8)}╮'))
-        print(color('primary', f'  │ {lbl} │'))
-        print(color('primary', 'bold', f'  ╰{"─" * w}╯'))
+        title = 'PDDAI Agent'
+        tw = max(len(lbl) + 4, len(title) + 6)
+        print(color('primary', 'bold', f'  ╭─ {title} ─{"─" * (tw - 6 - len(title))}╮'))
+        print(color('primary', f'  │ {lbl} {" " * (tw - 4 - len(lbl))}│'))
+        print(color('primary', 'bold', f'  ╰{"─" * (tw - 2)}╯'))
         print(color('muted', f'  tools: calculator, search, read'))
         print()
 

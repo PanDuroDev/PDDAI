@@ -75,11 +75,12 @@ def _save_conversation(conversation):
 
 def ai2ai(model, tokenizer, seed_msg, turns=12, delay_range=(3.0, 5.0), conversation=None):
     lbl = f'{sum(p.numel() for p in model.parameters())/1e6:.2f}M'
-    w = max(len(lbl) + 2, 14)
+    title = 'AI2AI'
+    tw = max(len(lbl) + 4, len(title) + 6)
     print()
-    print(color('primary', 'bold', f'  ╭─ AI2AI {"─" * (w - 4)}╮'))
-    print(color('primary', f'  │ {lbl} │'))
-    print(color('primary', 'bold', f'  ╰{"─" * w}╯'))
+    print(color('primary', 'bold', f'  ╭─ {title} ─{"─" * (tw - 6 - len(title))}╮'))
+    print(color('primary', f'  │ {lbl} {" " * (tw - 4 - len(lbl))}│'))
+    print(color('primary', 'bold', f'  ╰{"─" * (tw - 2)}╯'))
     print(color('muted', f'  Two models, {turns} turns max'))
     print(color('muted', f'  Seed: "{seed_msg}"'))
     print()

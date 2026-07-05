@@ -366,12 +366,13 @@ if __name__ == "__main__":
     total_params = sum(p.numel() for p in model.parameters())
     param_mb = total_params * 4 / (1024 * 1024)
 
-    print()
     lbl = f'{total_params/1e6:.2f}M params'
-    w = max(len(lbl) + 2, 14)
-    print(color('primary', 'bold', f'  ╭─ PDDAI {"─" * (w - 8)}╮'))
-    print(color('primary', f'  │ {lbl} │'))
-    print(color('primary', 'bold', f'  ╰{"─" * w}╯'))
+    title = 'PDDAI'
+    tw = max(len(lbl) + 4, len(title) + 6)
+    print()
+    print(color('primary', 'bold', f'  ╭─ {title} ─{"─" * (tw - 6 - len(title))}╮'))
+    print(color('primary', f'  │ {lbl} {" " * (tw - 4 - len(lbl))}│'))
+    print(color('primary', 'bold', f'  ╰{"─" * (tw - 2)}╯'))
     print(color('muted', f'  {model.embed_dim}d · {model.num_heads}h/{model.num_kv_heads}kv · {model.num_layers}L · {model.token_emb.weight.shape[0]} vocab'))
     print()
 
