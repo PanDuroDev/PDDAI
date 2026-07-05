@@ -171,6 +171,7 @@ def load_model(checkpoint_path="checkpoints/last_model.pt", tokenizer_path="data
     model.eval()
     total_params = sum(p.numel() for p in model.parameters())
     param_mb = total_params * 4 / (1024 * 1024)
+    tokenizer = load_tokenizer(tokenizer_path)
     return model, tokenizer
 
 
