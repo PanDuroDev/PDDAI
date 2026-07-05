@@ -10,44 +10,7 @@ import urllib.request
 import torch
 from tools.registry import ToolRegistry, make_default_registry
 import config
-
-
-class Spinner:
-    _spin_chars = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-
-    def __init__(self, message=''):
-        self.message = message
-        self.running = False
-        self._thread = None
-        self._start = 0.0
-
-    def start(self):
-        self._start = time.time()
-        self.running = True
-        self._thread = threading.Thread(target=self._spin, daemon=True)
-        self._thread.start()
-
-    def _spin(self):
-        i = 0
-        while self.running:
-            sys.stdout.write(f'\r{self._spin_chars[i]} {self.message}   ')
-            sys.stdout.flush()
-            i = (i + 1) % len(self._spin_chars)
-            time.sleep(0.12)
-
-    def stop(self, done=''):
-        elapsed = time.time() - self._start
-        if elapsed < 1:
-            label = f'{elapsed*1000:.0f}ms'
-        elif elapsed < 60:
-            label = f'{elapsed:.1f}s'
-        else:
-            label = f'{elapsed//60:.0f}m {elapsed%60:.0f}s'
-        self.running = False
-        if self._thread:
-            self._thread.join(timeout=0.25)
-        sys.stdout.write(f'\r{label} {self.message}   \n')
-        sys.stdout.flush()
+from chat import Colors, color, box_top, box_bottom, box_line, box_content, print_box, wrap, Spinner
 
 _CONFIG_FILE = os.path.join(os.path.dirname(__file__), '.agent_config.json')
 
@@ -567,26 +530,155 @@ class Agent:
             with open(path, 'w', encoding='utf-8') as f:
                 for u, a in conversation:
                     f.write(f'User: {u}\nAssistant: {a}\n\n')
-        print(f'Saved: {path}')
+        print(color('muted', f'  Saved: {path}'))
+
+    def _show_tool_menu(self):
+        tools = self.tools.list()
+        print()
+        print_box('Tools', '\n'.join(f'\\{t.name:<12} {t.description}' for t in tools), 'primary', 'text')
+        print(color('muted', '  \\<tool> <args>  to use a tool'))
+        print()
+
+    def _show_help(self):
+        print()
+        print_box('Commands',
+            '/exit           Exit\n'
+            '/help           Show this\n'
+            '/api <url>      Set API URL\n'
+            '/key <k>        Set API key\n'
+            '/model <m>      Set model\n'
+            '/tools          List tools\n'
+            '\\<tool> <args>   Use a tool',
+            'primary', 'text')
+        print()
 
     def chat(self):
-        print("Available: calculator, search, read, api <url>, key <api_key>, model <name>")
+        total_params = sum(p.numel() for p in self.model.parameters()) / 1e6
+        print()
+        lbl = f'{total_params:.2f}M params'
+        w = max(len(lbl) + 2, 14)
+        print(color('primary', 'bold', f'  ╭─ PDDAI Agent {"─" * (w - 8)}╮'))
+        print(color('primary', f'  │ {lbl} │'))
+        print(color('primary', 'bold', f'  ╰{"─" * w}╯'))
+        print(color('muted', f'  tools: calculator, search, read'))
+        print()
+
         conversation = []
 
         while True:
             try:
-                user = input("\nYou: ")
-                if user.lower() in ("quit", "exit", "q"):
-                    break
-                response = self.run(user)
+                inp = input(color('primary', 'bold', '> '))
+                if not inp.strip():
+                    continue
+
+                if inp.startswith('/'):
+                    cmd = inp[1:].strip().lower()
+                    if cmd in ('exit', 'quit', 'q'):
+                        print(color('muted', '  closing session...'))
+                        break
+                    elif cmd == 'help':
+                        self._show_help()
+                        continue
+                    elif cmd == 'tools':
+                        self._show_tool_menu()
+                        continue
+                    elif cmd.startswith('api '):
+                        print_box('You', inp, 'accent')
+                        resp = self.run(inp)
+                        print_box('Agent', resp, 'primary', 'text')
+                        print()
+                        conversation.append((inp, resp))
+                        continue
+                    elif cmd.startswith('key '):
+                        print_box('You', inp, 'accent')
+                        resp = self.run(inp)
+                        print_box('Agent', resp, 'primary', 'text')
+                        print()
+                        conversation.append((inp, resp))
+                        continue
+                    elif cmd.startswith('model '):
+                        print_box('You', inp, 'accent')
+                        resp = self.run(inp)
+                        print_box('Agent', resp, 'primary', 'text')
+                        print()
+                        conversation.append((inp, resp))
+                        continue
+                    else:
+                        print(color('error', f'  unknown: /{cmd}'))
+                        print(color('muted', '  try /help'))
+                        continue
+
+                if inp.startswith('\\'):
+                    parts = inp[1:].strip().split(maxsplit=1)
+                    tool_name = parts[0].lower() if parts else ''
+                    tool_arg = parts[1] if len(parts) > 1 else ''
+                    if not tool_name:
+                        self._show_tool_menu()
+                        continue
+                    if tool_name not in ('calculator', 'calc', 'search', 'web_search', 'read', 'read_file'):
+                        print(color('error', f'  unknown tool: \\{tool_name}'))
+                        print(color('muted', '  try \\help or \\tools'))
+                        continue
+                    print_box('You', inp, 'accent')
+                    if tool_name in ('search', 'web_search'):
+                        sp = Spinner('Searching sources')
+                        sp.start()
+                        sources = self._route_query(tool_arg)
+                        raw = self._aggregate_results(tool_arg, sources)
+                        if raw and self.api_url:
+                            sp.stop()
+                            sp = Spinner('Compressing with 9Router')
+                            sp.start()
+                            compressed = self._compress_context(raw)
+                            if not compressed.startswith('(9Router'):
+                                raw = compressed
+                            sp.stop()
+                        elif raw:
+                            sp.stop()
+                        else:
+                            sp.stop()
+                            result = self.tools.call('web_search', query=tool_arg)
+                            raw = result[:2000]
+                    if tool_name in ('search', 'web_search'):
+                        prompt = f"{raw}\n\nAnswer the question based on this: {tool_arg}"
+                        sp = Spinner('Generating')
+                        sp.start()
+                        response, _ = self.generate(prompt, max_new=192)
+                        sp.stop()
+                        disp = response.strip()
+                    else:
+                        sp = Spinner('Running')
+                        sp.start()
+                        if tool_name in ('calc', 'calculator'):
+                            result = self.tools.call('calculator', expression=tool_arg)
+                        elif tool_name in ('read', 'read_file'):
+                            result = self.tools.call('read_file', path=tool_arg)
+                        else:
+                            result = "unknown tool"
+                        sp.stop()
+                        disp = result.strip()
+                    cleaned = self._output_cleaner(disp)
+                    print_box('Agent', cleaned, 'primary', 'text')
+                    print()
+                    conversation.append((inp, cleaned))
+                    continue
+
+                print_box('You', inp, 'accent')
+                sp = Spinner('Generating')
+                sp.start()
+                response, _ = self.generate(inp, max_new=128)
+                sp.stop()
+                disp = response.strip()
+                cleaned = self._output_cleaner(disp)
+                print_box('Agent', cleaned, 'primary', 'text')
                 print()
-                print()
-                conversation.append((user, response))
+                conversation.append((inp, cleaned))
+
             except KeyboardInterrupt:
-                print("\nBye!")
+                print(color('muted', '\n  closing session...'))
                 break
             except Exception as e:
-                print(f"Error: {e}")
+                print(color('error', f'  Error: {e}'))
 
         self._save_conversation(conversation)
 
