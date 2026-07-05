@@ -8,9 +8,24 @@ A decoder-only transformer built from scratch with PyTorch — featuring GQA, Ro
 
  非商用 仅研究用途 | غير تجاري | Non-commercial only
 
-Select your language / اختر لغتك / 选择语言 / 言語を選択 / Выберите язык / Choisissez votre langue
-
 </div>
+
+<p align="center">
+  Select your language / اختر لغتك / 选择语言 / 言語を選択 / Выберите язык / Choisissez votre langue
+</p>
+
+<p align="center">
+  <a href="README-en.md">🇬🇧 English</a> •
+  <a href="README-ar.md">🇸🇦 العربية</a> •
+  <a href="README-zh.md">🇨🇳 中文</a> •
+  <a href="README-ja.md">🇯🇵 日本語</a> •
+  <a href="README-ru.md">🇷🇺 Русский</a> •
+  <a href="README-fr.md">🇫🇷 Français</a> •
+  <a href="README-es.md">🇪🇸 Español</a> •
+  <a href="README-de.md">🇩🇪 Deutsch</a> •
+  <a href="README-pt.md">🇵🇹 Português</a> •
+  <a href="README-hi.md">🇮🇳 हिन्दी</a>
+</p>
 
 ---
 
@@ -52,24 +67,3 @@ PDDAI is a **decoder-only transformer** built entirely from scratch in **PyTorch
 ### Training Data Export
 
 On clean exit, the entire conversation history is sent to 9Router with a formatting prompt that corrects factual errors, fixes grammar, and restructures the dialogue into high-quality training data. The result is saved to `training_conversations/` for future fine-tuning.
-
----
-
-<p align="center">
-  <a href="README-en.md">🇬🇧 English</a> •
-  <a href="README-ar.md">🇸🇦 العربية</a> •
-  <a href="README-zh.md">🇨🇳 中文</a> •
-  <a href="README-ja.md">🇯🇵 日本語</a> •
-  <a href="README-ru.md">🇷🇺 Русский</a> •
-  <a href="README-fr.md">🇫🇷 Français</a> •
-  <a href="README-es.md">🇪🇸 Español</a> •
-  <a href="README-de.md">🇩🇪 Deutsch</a> •
-  <a href="README-pt.md">🇵🇹 Português</a> •
-  <a href="README-hi.md">🇮🇳 हिन्दी</a>
-</p>
-
----
-
-<p align="center">
-  <i>Non-Commercial Use Only · <a href="LICENSE">LICENSE</a></i>
-</p>
