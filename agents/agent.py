@@ -609,22 +609,30 @@ class Agent:
                         continue
 
                 if inp.startswith('\\'):
-                    parts = inp[1:].strip().split(maxsplit=1)
-                    tool_name = parts[0].lower() if parts else ''
-                    tool_arg = parts[1] if len(parts) > 1 else ''
-                    if not tool_name:
-                        self._show_tool_menu()
+                    tools = [
+                        ('search', 'Search the web'),
+                        ('calc', 'Calculate math expression'),
+                        ('read', 'Read a file'),
+                    ]
+                    print()
+                    print_box('Pick a tool',
+                        '\n'.join(f'{i+1}. \\{n:<9} {d}' for i, (n, d) in enumerate(tools)),
+                        'primary', 'text')
+                    pick = input(color('accent', '  Tool (1-3): ')).strip()
+                    if pick not in ('1', '2', '3'):
+                        print(color('error', '  cancelled'))
                         continue
-                    if tool_name not in ('calculator', 'calc', 'search', 'web_search', 'read', 'read_file'):
-                        print(color('error', f'  unknown tool: \\{tool_name}'))
-                        print(color('muted', '  try \\help or \\tools'))
-                        continue
-                    print_box('You', inp, 'accent')
-                    if tool_name in ('search', 'web_search'):
+                    label, _ = tools[int(pick) - 1]
+                    if label == 'search':
+                        arg = input(color('accent', '  Query: ')).strip()
+                        if not arg:
+                            continue
+                        print()
+                        print_box('You', f'\\search {arg}', 'accent')
                         sp = Spinner('Searching sources')
                         sp.start()
-                        sources = self._route_query(tool_arg)
-                        raw = self._aggregate_results(tool_arg, sources)
+                        sources = self._route_query(arg)
+                        raw = self._aggregate_results(arg, sources)
                         if raw and self.api_url:
                             sp.stop()
                             sp = Spinner('Compressing with 9Router')
@@ -637,24 +645,35 @@ class Agent:
                             sp.stop()
                         else:
                             sp.stop()
-                            result = self.tools.call('web_search', query=tool_arg)
+                            result = self.tools.call('web_search', query=arg)
                             raw = result[:2000]
-                    if tool_name in ('search', 'web_search'):
-                        prompt = f"{raw}\n\nAnswer the question based on this: {tool_arg}"
+                            sp.stop()
+                        prompt = f"{raw}\n\nAnswer the question based on this: {arg}"
                         sp = Spinner('Generating')
                         sp.start()
                         response, _ = self.generate(prompt, max_new=192)
                         sp.stop()
                         disp = response.strip()
-                    else:
-                        sp = Spinner('Running')
+                    elif label == 'calc':
+                        arg = input(color('accent', '  Expression: ')).strip()
+                        if not arg:
+                            continue
+                        print()
+                        print_box('You', f'\\calc {arg}', 'accent')
+                        sp = Spinner('Calculating')
                         sp.start()
-                        if tool_name in ('calc', 'calculator'):
-                            result = self.tools.call('calculator', expression=tool_arg)
-                        elif tool_name in ('read', 'read_file'):
-                            result = self.tools.call('read_file', path=tool_arg)
-                        else:
-                            result = "unknown tool"
+                        result = self.tools.call('calculator', expression=arg)
+                        sp.stop()
+                        disp = result.strip()
+                    elif label == 'read':
+                        arg = input(color('accent', '  Path: ')).strip()
+                        if not arg:
+                            continue
+                        print()
+                        print_box('You', f'\\read {arg}', 'accent')
+                        sp = Spinner('Reading')
+                        sp.start()
+                        result = self.tools.call('read_file', path=arg)
                         sp.stop()
                         disp = result.strip()
                     cleaned = self._output_cleaner(disp)

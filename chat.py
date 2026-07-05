@@ -54,7 +54,7 @@ def term_w():
     except Exception:
         return 80
 
-IW = min(term_w() - 6, 88)
+IW = min(term_w() - 6, 72)
 
 def box_top(title, c='primary'):
     pad = IW - len(title) - 4
