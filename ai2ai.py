@@ -6,24 +6,12 @@ import time
 import random
 import urllib.request
 from datetime import datetime
-from chat import load_model, resolve_model_path, generate, Spinner
+from chat import (
+    load_model, resolve_model_path, generate, Spinner,
+    Colors, color, box_top, box_bottom, box_line, box_content, print_box, wrap
+)
 from data.tokenizer import encode_text
 import config
-
-
-class Colors:
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    BLUE = '\033[94m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-
-
-def color(text, c):
-    return f'{c}{text}{Colors.RESET}'
 
 
 def _format_training(conversation):
@@ -80,21 +68,21 @@ def _save_conversation(conversation):
     spinner.start()
     data = _format_training(conversation)
     spinner.stop()
-    if data:
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(data)
-    else:
-        with open(path, 'w', encoding='utf-8') as f:
-            for speaker, text in conversation:
-                f.write(f'{speaker}: {text}\n')
-    print(f'Saved: {path}')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(data if data else '\n'.join(f'{s}: {t}' for s, t in conversation))
+    print(color('muted', f'  Saved: {path}'))
 
 
 def ai2ai(model, tokenizer, seed_msg, turns=12, delay_range=(3.0, 5.0), conversation=None):
-    print(color('\n' + '=' * 60, Colors.CYAN + Colors.BOLD))
-    print(color('  AI2AI — Two Models Talking to Each Other', Colors.CYAN + Colors.BOLD))
-    print(color('=' * 60, Colors.CYAN + Colors.BOLD))
-    print(color(f'Seed: "{seed_msg}"\n', Colors.YELLOW))
+    lbl = f'{sum(p.numel() for p in model.parameters())/1e6:.2f}M'
+    w = max(len(lbl) + 2, 14)
+    print()
+    print(color('primary', 'bold', f'  ╭─ AI2AI {"─" * (w - 4)}╮'))
+    print(color('primary', f'  │ {lbl} │'))
+    print(color('primary', 'bold', f'  ╰{"─" * w}╯'))
+    print(color('muted', f'  Two models, {turns} turns max'))
+    print(color('muted', f'  Seed: "{seed_msg}"'))
+    print()
 
     params_a = dict(temperature=0.9, top_k=40, max_tokens=96, rep_penalty=1.15)
     params_b = dict(temperature=0.75, top_k=50, max_tokens=96, rep_penalty=1.2)
@@ -106,17 +94,14 @@ def ai2ai(model, tokenizer, seed_msg, turns=12, delay_range=(3.0, 5.0), conversa
         delay = random.uniform(*delay_range)
         time.sleep(delay)
 
-        sys.stdout.write(color(f'[{turn+1}] A: ', Colors.GREEN + Colors.BOLD))
-        sys.stdout.flush()
-        tokens = []
-        def on_a(t):
-            tokens.append(t)
-            sys.stdout.write(t)
-            sys.stdout.flush()
-        out_a, _ = generate(model, tokenizer, ctx_a, on_token=on_a, **params_a)
+        sp = Spinner(f'AI-A thinking [{turn+1}/{turns}]')
+        sp.start()
+        out_a, _ = generate(model, tokenizer, ctx_a, **params_a)
+        sp.stop()
         out_a = out_a.strip()
         if not out_a:
             out_a = '(silence)'
+        print_box(f'A [{turn+1}]', out_a, 'accent', 'text')
         print()
         if conversation is not None:
             conversation.append(('A', out_a))
@@ -126,17 +111,14 @@ def ai2ai(model, tokenizer, seed_msg, turns=12, delay_range=(3.0, 5.0), conversa
         delay = random.uniform(*delay_range)
         time.sleep(delay)
 
-        sys.stdout.write(color(f'[{turn+1}] B: ', Colors.BLUE + Colors.BOLD))
-        sys.stdout.flush()
-        tokens = []
-        def on_b(t):
-            tokens.append(t)
-            sys.stdout.write(t)
-            sys.stdout.flush()
-        out_b, _ = generate(model, tokenizer, ctx_b, on_token=on_b, **params_b)
+        sp = Spinner(f'AI-B thinking [{turn+1}/{turns}]')
+        sp.start()
+        out_b, _ = generate(model, tokenizer, ctx_b, **params_b)
+        sp.stop()
         out_b = out_b.strip()
         if not out_b:
             out_b = '(silence)'
+        print_box(f'B [{turn+1}]', out_b, 'primary', 'text')
         print()
         if conversation is not None:
             conversation.append(('B', out_b))
@@ -144,12 +126,10 @@ def ai2ai(model, tokenizer, seed_msg, turns=12, delay_range=(3.0, 5.0), conversa
         ctx_a = out_b
 
         if out_a == out_b:
-            print(color('(Both said the same thing — stopping)', Colors.RED + Colors.DIM))
+            print(color('warning', '  Both said the same — stopping'))
             break
 
-    print(color('\n' + '=' * 60, Colors.CYAN + Colors.BOLD))
-    print(color(f'  Conversation finished after {turn+1} rounds', Colors.CYAN + Colors.BOLD))
-    print(color('=' * 60, Colors.CYAN + Colors.BOLD))
+    print(color('primary', 'bold', f'  Conversation finished after {turn+1} rounds'))
 
 
 def main():
@@ -163,20 +143,22 @@ def main():
     args = parser.parse_args()
 
     path = resolve_model_path(args.model)
+    spinner = Spinner('Loading model')
+    spinner.start()
     model, tokenizer = load_model(path, args.tokenizer)
+    spinner.stop()
     if model is None or tokenizer is None:
         exit(1)
 
-    print(color('AI2AI started.', Colors.CYAN + Colors.BOLD))
-    print('You send ONE message, then the two models talk to each other.')
-    seed = input(color('You: ', Colors.YELLOW + Colors.BOLD))
+    print(color('muted', '  You send ONE message, then the two models talk.'))
+    seed = input(color('accent', '> '))
 
     conversation = [('User', seed)]
 
     try:
         ai2ai(model, tokenizer, seed, turns=args.turns, delay_range=(args.min_delay, args.max_delay), conversation=conversation)
     except KeyboardInterrupt:
-        print(color('\nInterrupted.', Colors.RED))
+        print(color('muted', '\n  Interrupted.'))
     finally:
         _save_conversation(conversation)
 
