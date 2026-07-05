@@ -16,44 +16,86 @@ import config
 
 class Colors:
     PRIMARY = '\033[38;2;136;192;208m'
-    SECONDARY = '\033[38;2;129;161;193m'
     ACCENT = '\033[38;2;143;188;187m'
     TEXT = '\033[38;2;216;222;233m'
     TEXT_MUTED = '\033[38;2;76;86;106m'
     SUCCESS = '\033[38;2;163;190;140m'
     WARNING = '\033[38;2;208;135;112m'
     ERROR = '\033[38;2;191;97;106m'
+    BG = '\033[48;2;46;52;64m'
     RESET = '\033[0m'
     BOLD = '\033[1m'
     DIM = '\033[2m'
 
 
-def style(primary, *parts):
+def color(*args):
     out = ''
-    for p in parts:
-        if p == 'bold':
+    for a in args:
+        if a == 'bold':
             out += Colors.BOLD
-        elif p == 'dim':
+        elif a == 'dim':
             out += Colors.DIM
-        elif p == 'primary':
-            out += Colors.PRIMARY
-        elif p == 'secondary':
-            out += Colors.SECONDARY
-        elif p == 'accent':
-            out += Colors.ACCENT
-        elif p == 'text':
-            out += Colors.TEXT
-        elif p == 'muted':
-            out += Colors.TEXT_MUTED
-        elif p == 'success':
-            out += Colors.SUCCESS
-        elif p == 'warning':
-            out += Colors.WARNING
-        elif p == 'error':
-            out += Colors.ERROR
+        elif isinstance(a, str) and hasattr(Colors, a.upper()):
+            out += getattr(Colors, a.upper())
         else:
-            out += str(p)
+            out += str(a)
     return out + Colors.RESET
+
+
+W = 72
+def sep(c='muted'):
+    return color(c, '  ', '─' * W)
+
+
+def box_top(title, c='primary'):
+    tl = f'┌─ {title} '
+    pad = W - len(title) - 3
+    if pad < 0:
+        pad = 2
+    return color(c, f'  {tl}{"─" * pad}┐')
+
+
+def box_bottom(c='primary'):
+    return color(c, f'  └─{"─" * (W - 1)}┘')
+
+
+def box_line(text='', c='text'):
+    pad = W - len(text)
+    if pad < 0:
+        pad = 0
+    return color(c, f'  │ {text}{" " * pad}│')
+
+
+def wrap(text, width):
+    words = text.split(' ')
+    lines = []
+    cur = ''
+    for w in words:
+        if w == '\n':
+            lines.append(cur)
+            cur = ''
+        elif len(cur) + len(w) + 1 <= width:
+            cur = (cur + ' ' + w).strip()
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines or ['']
+
+
+def box_content(title, text, c='primary', tc='text'):
+    lines = wrap(text, W - 3)
+    out = box_top(title, c) + '\n'
+    for line in lines:
+        out += box_line(line, tc) + '\n'
+    out += box_bottom(c)
+    return out
+
+
+def print_box(title, text, c='primary', tc='text'):
+    print(box_content(title, text, c, tc))
 
 
 class Spinner:
@@ -74,7 +116,7 @@ class Spinner:
     def _spin(self):
         i = 0
         while self.running:
-            sys.stdout.write(f'\r{Colors.PRIMARY}{self._spin_chars[i]} {self.message}{Colors.RESET}   ')
+            sys.stdout.write(f'\r{Colors.PRIMARY}{self._spin_chars[i]} {self.message}{Colors.RESET}')
             sys.stdout.flush()
             i = (i + 1) % len(self._spin_chars)
             time.sleep(0.12)
@@ -143,7 +185,7 @@ def infer_config_from_state(checkpoint):
 
 def load_model(checkpoint_path="checkpoints/last_model.pt", tokenizer_path="data/tokenizer.json"):
     if not os.path.exists(checkpoint_path):
-        print(style('error', 'error', 'bold', ' ✗ Checkpoint not found: ', checkpoint_path))
+        print(color('error', 'bold', '  ✗ Checkpoint not found: ', checkpoint_path))
         return None, None
 
     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
@@ -163,14 +205,12 @@ def load_model(checkpoint_path="checkpoints/last_model.pt", tokenizer_path="data
     )
     result = model.load_state_dict(state, strict=False)
     if result.missing_keys:
-        print(style('warning', 'warning', ' ⚠ Missing keys: ', str(result.missing_keys)))
+        print(color('warning', ' ⚠ Missing keys: ', str(result.missing_keys)))
     if result.unexpected_keys:
-        print(style('warning', 'warning', ' ⚠ Unexpected keys: ', str(result.unexpected_keys)))
+        print(color('warning', ' ⚠ Unexpected keys: ', str(result.unexpected_keys)))
     if cfg['tied_embeddings']:
         model.head.weight = model.token_emb.weight
     model.eval()
-    total_params = sum(p.numel() for p in model.parameters())
-    param_mb = total_params * 4 / (1024 * 1024)
     tokenizer = load_tokenizer(tokenizer_path)
     return model, tokenizer
 
@@ -273,33 +313,27 @@ def _save_conversation(conversation):
     spinner.stop()
     with open(path, 'w', encoding='utf-8') as f:
         f.write(data if data else '\n'.join(f'User: {u}\nAssistant: {a}' for u, a in conversation))
-    print(style('muted', '  └─ saved: ', path))
+    print(color('muted', f'  └─ saved: {path}'))
 
 
 def show_help():
     print()
-    print(style('primary', 'bold', '  Commands'))
-    print(style('muted', '  ─────────'))
-    print(style('text', '    /exit, /quit, /q    Exit the program'))
-    print(style('text', '    /help               Show this help'))
-    print(style('text', '    /model              Show model info'))
-    print(style('text', '    /clear              Clear the screen'))
+    print_box('Commands', '/exit, /quit, /q    Exit\n/help               Show this\n/model              Model info\n/clear              Clear screen', 'primary', 'text')
     print()
 
 
-def show_model_info(cfg):
-    params_str = f'{cfg["total_params"]/1e6:.2f}M'
-    mb_str = f'({cfg["param_mb"]:.0f}MB)'
-    arch_str = f'{cfg["embed_dim"]}d, {cfg["num_heads"]}h/{cfg["num_kv_heads"]}kv, {cfg["num_layers"]}L'
-    emb_str = 'tied' if cfg['tied_embeddings'] else 'untied'
+def show_model_info(model):
+    p = sum(p.numel() for p in model.parameters())
+    m = p * 4 / (1024 * 1024)
+    info = (
+        f'Parameters:  {p/1e6:.2f}M  ({m:.0f}MB)\n'
+        f'Architecture: {model.embed_dim}d, {model.num_heads}h/{model.num_kv_heads}kv, {model.num_layers}L\n'
+        f'Vocab:       {model.token_emb.weight.shape[0]}\n'
+        f'Embeddings:  {"tied" if model.tied_embeddings else "untied"}\n'
+        f'Refresh:     {model.refresh_layers}'
+    )
     print()
-    print(style('primary', 'bold', '  Model'))
-    print(style('muted', '  ─────────'))
-    print(style('text', f'    Parameters: {style("accent", "bold", params_str)} {style("muted", mb_str)}'))
-    print(style('text', f'    Architecture: {style("accent", arch_str)}'))
-    print(style('text', f'    Vocab: {style("accent", str(cfg["vocab_size"]))}'))
-    print(style('text', f'    Embeddings: {style("accent", emb_str)}'))
-    print(style('text', f'    Refresh layers: {style("accent", str(cfg["refresh_layers"]))}'))
+    print_box('Model', info, 'primary', 'text')
     print()
 
 
@@ -317,68 +351,72 @@ if __name__ == "__main__":
     if model is None or tokenizer is None:
         spinner.stop()
         exit(1)
-    total_params = sum(p.numel() for p in model.parameters())
-    param_mb = total_params * 4 / (1024 * 1024)
     spinner.stop()
 
-    cfg_info = {
-        'total_params': total_params,
-        'param_mb': param_mb,
-        'vocab_size': model.token_emb.weight.shape[0],
-        'embed_dim': model.token_emb.weight.shape[1],
-        'num_heads': model.num_heads,
-        'num_kv_heads': model.num_kv_heads,
-        'num_layers': model.num_layers,
-        'tied_embeddings': model.head.weight is model.token_emb.weight,
-        'refresh_layers': getattr(model, 'refresh_layers', []),
-    }
+    total_params = sum(p.numel() for p in model.parameters())
+    param_mb = total_params * 4 / (1024 * 1024)
 
     print()
-    print(style('primary', 'bold', f'  ╭─ PDDAI ─╮'))
-    print(style('primary', f'  │ {total_params/1e6:.2f}M params │'))
-    print(style('primary', 'bold', f'  ╰─────────╯'))
-    print(style('muted', f'  {cfg_info["embed_dim"]}d · {cfg_info["num_heads"]}h/{cfg_info["num_kv_heads"]}kv · {cfg_info["num_layers"]}L · {cfg_info["vocab_size"]} vocab'))
+    print(color('primary', 'bold', f'  ╭─ PDDAI ─╮'))
+    print(color('primary', f'  │ {total_params/1e6:.2f}M params │'))
+    print(color('primary', 'bold', f'  ╰─────────╯'))
+    print(color('muted', f'  {model.embed_dim}d · {model.num_heads}h/{model.num_kv_heads}kv · {model.num_layers}L · {model.token_emb.weight.shape[0]} vocab'))
     print()
 
     conversation = []
 
     while True:
         try:
-            inp = input(style('primary', 'bold', '> '))
+            inp = input(color('primary', 'bold', '> '))
             if not inp.strip():
                 continue
 
             if inp.startswith('/'):
                 cmd = inp[1:].strip().lower()
                 if cmd in ('exit', 'quit', 'q'):
-                    print(style('muted', '  exiting...'))
+                    print(color('muted', '  closing session...'))
                     break
                 elif cmd == 'help':
                     show_help()
                     continue
                 elif cmd == 'model':
-                    show_model_info(cfg_info)
+                    show_model_info(model)
                     continue
                 elif cmd == 'clear':
                     os.system('cls' if os.name == 'nt' else 'clear')
                     continue
                 else:
-                    print(style('error', f'  unknown command: /{cmd}'))
-                    print(style('muted', '  try /help'))
+                    print(color('error', f'  unknown command: /{cmd}'))
+                    print(color('muted', '  try /help'))
                     continue
 
-            sys.stdout.write(style('text', '  '))
-            sys.stdout.flush()
-            tokens = []
+            print_box('You', inp, 'accent')
+
+            st = {'top': False, 'buf': '', 'lines': []}
             def on_token(t):
-                tokens.append(t)
+                if not st['top']:
+                    sys.stdout.write(box_top('PDDAI', 'primary') + '\n')
+                    st['top'] = True
                 sys.stdout.write(t)
                 sys.stdout.flush()
+                st['lines'].append(t)
+
             response, _ = generate(model, tokenizer, inp, temperature=0.9, on_token=on_token)
-            print('\n')
+
+            full = ''.join(st['lines'])
+            if st['top']:
+                wlines = wrap(full, W - 3)
+                sys.stdout.write('\r' + ' ' * (W + 4) + '\r')
+                for line in wlines:
+                    print(box_line(line, 'text'))
+                print(box_bottom('primary'))
+            else:
+                print_box('PDDAI', full, 'primary', 'text')
+
+            print()
             conversation.append((inp, response))
         except KeyboardInterrupt:
-            print(style('muted', '\n  exiting...'))
+            print(color('muted', '\n  closing session...'))
             break
 
     _save_conversation(conversation)
