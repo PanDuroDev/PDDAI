@@ -15,16 +15,16 @@ A decoder-only transformer built from scratch with PyTorch — featuring GQA, Ro
 </p>
 
 <p align="center">
-  <a href="README-en.md">🇬🇧 English</a> •
-  <a href="README-ar.md">🇸🇦 العربية</a> •
-  <a href="README-zh.md">🇨🇳 中文</a> •
-  <a href="README-ja.md">🇯🇵 日本語</a> •
-  <a href="README-ru.md">🇷🇺 Русский</a> •
-  <a href="README-fr.md">🇫🇷 Français</a> •
-  <a href="README-es.md">🇪🇸 Español</a> •
-  <a href="README-de.md">🇩🇪 Deutsch</a> •
-  <a href="README-pt.md">🇵🇹 Português</a> •
-  <a href="README-hi.md">🇮🇳 हिन्दी</a>
+  <a href="i18n/README-en.md">🇬🇧 English</a> •
+  <a href="i18n/README-ar.md">🇸🇦 العربية</a> •
+  <a href="i18n/README-zh.md">🇨🇳 中文</a> •
+  <a href="i18n/README-ja.md">🇯🇵 日本語</a> •
+  <a href="i18n/README-ru.md">🇷🇺 Русский</a> •
+  <a href="i18n/README-fr.md">🇫🇷 Français</a> •
+  <a href="i18n/README-es.md">🇪🇸 Español</a> •
+  <a href="i18n/README-de.md">🇩🇪 Deutsch</a> •
+  <a href="i18n/README-pt.md">🇵🇹 Português</a> •
+  <a href="i18n/README-hi.md">🇮🇳 हिन्दी</a>
 </p>
 
 ---
